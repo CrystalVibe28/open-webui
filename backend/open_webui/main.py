@@ -1615,9 +1615,17 @@ async def chat_completion(
                 else:
                     raise Exception('Model not found')
 
+        request_params = form_data.get('params', {})
+        model_own_params = model_info.params.model_dump() if model_info and model_info.params else {}
+
         # Chat Params
-        stream_delta_chunk_size = form_data.get('params', {}).get('stream_delta_chunk_size')
-        reasoning_tags = form_data.get('params', {}).get('reasoning_tags')
+        stream_delta_chunk_size = request_params.get('stream_delta_chunk_size')
+        reasoning_tags = request_params.get('reasoning_tags')
+        preserve_reasoning_content = _resolve_preserve_reasoning_content(
+            request_params,
+            model_info_params,
+            model_own_params,
+        )
 
         # Model Params
         if model_info_params.get('stream_response') is not None:
@@ -1667,11 +1675,12 @@ async def chat_completion(
                 'function_calling': (
                     'native'
                     if (
-                        form_data.get('params', {}).get('function_calling') == 'native'
+                        request_params.get('function_calling') == 'native'
                         or model_info_params.get('function_calling') == 'native'
                     )
                     else 'default'
                 ),
+                'preserve_reasoning_content': preserve_reasoning_content,
             },
         }
 
@@ -2037,6 +2046,25 @@ app.state.CHAT_COMPLETION_HANDLER = chat_completion
 
 ##################################
 #
+
+
+def _resolve_preserve_reasoning_content(
+    request_params: dict | None,
+    model_info_params: dict | None,
+    model_own_params: dict | None,
+):
+    request_params = request_params or {}
+    model_own_params = model_own_params or {}
+
+    if 'preserve_reasoning_content' in request_params:
+        return request_params.get('preserve_reasoning_content')
+
+    if 'preserve_reasoning_content' in model_own_params:
+        return model_own_params.get('preserve_reasoning_content')
+
+    return None
+
+
 # Anthropic Messages API Compatible Endpoint
 #
 ##################################

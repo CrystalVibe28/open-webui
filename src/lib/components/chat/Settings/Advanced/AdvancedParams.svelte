@@ -11,6 +11,7 @@
 
 	export let admin = false;
 	export let custom = false;
+	export let modelEditor = false;
 
 	const defaultParams = {
 		// Advanced
@@ -18,6 +19,7 @@
 		stream_delta_chunk_size: null, // Set the chunk size for streaming responses
 		function_calling: null,
 		reasoning_tags: null,
+		preserve_reasoning_content: null,
 		seed: null,
 		stop: null,
 		temperature: null,
@@ -175,6 +177,38 @@
 			</div>
 		</Tooltip>
 	</div>
+
+	{#if modelEditor && custom && admin}
+		<div class=" py-0.5 w-full justify-between">
+			<Tooltip
+				content={$i18n.t(
+					'Passes assistant reasoning_content back during native tool-call replay for compatible thinking models such as DeepSeek or Kimi. Leave disabled for providers that reject unknown fields.'
+				)}
+				placement="top-start"
+				className="inline-tooltip"
+			>
+				<div class="flex w-full justify-between">
+					<div class=" self-center text-xs">
+						{$i18n.t('Preserve Reasoning Content')}
+					</div>
+					<button
+						class="p-1 px-3 text-xs flex rounded-sm transition shrink-0 outline-hidden"
+						type="button"
+						on:click={() => {
+							params.preserve_reasoning_content =
+								(params?.preserve_reasoning_content ?? null) === null ? true : null;
+						}}
+					>
+						{#if (params?.preserve_reasoning_content ?? null) === true}
+							<span class="ml-2 self-center">{$i18n.t('On')}</span>
+						{:else}
+							<span class="ml-2 self-center">{$i18n.t('Default')}</span>
+						{/if}
+					</button>
+				</div>
+			</Tooltip>
+		</div>
+	{/if}
 
 	<div class=" py-0.5 w-full justify-between">
 		<Tooltip

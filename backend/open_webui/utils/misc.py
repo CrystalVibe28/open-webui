@@ -129,7 +129,9 @@ def get_content_from_message(message: dict) -> Optional[str]:
     return None
 
 
-def convert_output_to_messages(output: list, raw: bool = False) -> list[dict]:
+def convert_output_to_messages(
+    output: list, raw: bool = False, *, preserve_reasoning_content: bool = False
+) -> list[dict]:
     """
     Convert OR-aligned output items to OpenAI Chat Completion-format messages.
 
@@ -152,13 +154,32 @@ def convert_output_to_messages(output: list, raw: bool = False) -> list[dict]:
     def flush_pending():
         nonlocal pending_content, pending_tool_calls
         if pending_content or pending_tool_calls:
-            messages.append(
-                {
-                    'role': 'assistant',
-                    'content': '\n'.join(pending_content) if pending_content else '',
-                    **({'tool_calls': pending_tool_calls} if pending_tool_calls else {}),
-                }
-            )
+            content_parts = []
+            reasoning_parts = []
+
+            for item in pending_content:
+                if isinstance(item, str):
+                    content_parts.append(item)
+                    continue
+
+                if item['type'] == 'content':
+                    content_parts.append(item['text'])
+                elif item['type'] == 'reasoning':
+                    if pending_tool_calls and preserve_reasoning_content:
+                        reasoning_parts.append(item['text'])
+                    else:
+                        content_parts.append(item['wrapped'])
+
+            message = {
+                'role': 'assistant',
+                'content': '\n'.join(content_parts) if content_parts else '',
+                **({'tool_calls': pending_tool_calls} if pending_tool_calls else {}),
+            }
+
+            if reasoning_parts and pending_tool_calls:
+                message['reasoning_content'] = '\n'.join(reasoning_parts)
+
+            messages.append(message)
             pending_content = []
             pending_tool_calls = []
 
@@ -173,7 +194,7 @@ def convert_output_to_messages(output: list, raw: bool = False) -> list[dict]:
                 if part.get('type') == 'output_text':
                     text += part.get('text', '')
             if text:
-                pending_content.append(text)
+                pending_content.append({'type': 'content', 'text': text})
 
         elif item_type == 'function_call':
             # Collect tool calls to batch into assistant message
@@ -241,7 +262,18 @@ def convert_output_to_messages(output: list, raw: bool = False) -> list[dict]:
                     elif 'text' in part:
                         reasoning_text += part.get('text', '')
 
-                if reasoning_text:
+                if preserve_reasoning_content:
+                    if reasoning_text.strip():
+                        start_tag = item.get('start_tag', '<think>')
+                        end_tag = item.get('end_tag', '</think>')
+                        pending_content.append(
+                            {
+                                'type': 'reasoning',
+                                'text': reasoning_text,
+                                'wrapped': f'{start_tag}{reasoning_text}{end_tag}',
+                            }
+                        )
+                elif reasoning_text:
                     start_tag = item.get('start_tag', '<think>')
                     end_tag = item.get('end_tag', '</think>')
                     pending_content.append(f'{start_tag}{reasoning_text}{end_tag}')
@@ -260,7 +292,7 @@ def convert_output_to_messages(output: list, raw: bool = False) -> list[dict]:
             code_output = item.get('output', '')
 
             if code:
-                pending_content.append(f'<code_interpreter>\n{code}\n</code_interpreter>')
+                pending_content.append({'type': 'content', 'text': f'<code_interpreter>\n{code}\n</code_interpreter>'})
 
             if code_output:
                 if isinstance(code_output, dict):
@@ -270,7 +302,12 @@ def convert_output_to_messages(output: list, raw: bool = False) -> list[dict]:
                 else:
                     output_text = str(code_output)
                 if output_text:
-                    pending_content.append(f'<code_interpreter_output>\n{output_text}\n</code_interpreter_output>')
+                    pending_content.append(
+                        {
+                            'type': 'content',
+                            'text': f'<code_interpreter_output>\n{output_text}\n</code_interpreter_output>',
+                        }
+                    )
 
         elif item_type.startswith('open_webui:'):
             # Skip other extension types

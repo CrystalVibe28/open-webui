@@ -2189,6 +2189,10 @@ def process_messages_with_output(messages: list[dict]) -> list[dict]:
     return processed
 
 
+def _should_preserve_reasoning_content(metadata: dict | None) -> bool:
+    return (metadata or {}).get('params', {}).get('preserve_reasoning_content') is True
+
+
 SKILL_MENTION_RE = re.compile(r'<\$([^|>]+)\|?[^>]*>')
 
 
@@ -4716,10 +4720,20 @@ async def streaming_chat_response_handler(response, ctx):
                             system_message = get_system_message(form_data['messages'])
                             new_form_data['messages'] = (
                                 [system_message] if system_message else []
-                            ) + convert_output_to_messages(output, raw=True)
+                            ) + convert_output_to_messages(
+                                output,
+                                raw=True,
+                                preserve_reasoning_content=_should_preserve_reasoning_content(metadata),
+                            )
                             new_form_data['previous_response_id'] = last_response_id
                         else:
-                            tool_messages = convert_output_to_messages(output, raw=True)
+                            # Middleware only sees metadata params here; Responses API exclusion
+                            # is enforced upstream by router-level tests and payload shaping.
+                            tool_messages = convert_output_to_messages(
+                                output,
+                                raw=True,
+                                preserve_reasoning_content=_should_preserve_reasoning_content(metadata),
+                            )
 
                             # Chat Completions providers don't support multimodal
                             # tool messages.  Extract images into a user message.
@@ -4936,7 +4950,11 @@ async def streaming_chat_response_handler(response, ctx):
                                 'metadata': metadata,
                                 'messages': [
                                     *form_data['messages'],
-                                    *convert_output_to_messages(output, raw=True),
+                                    *convert_output_to_messages(
+                                        output,
+                                        raw=True,
+                                        preserve_reasoning_content=_should_preserve_reasoning_content(metadata),
+                                    ),
                                 ],
                             }
 

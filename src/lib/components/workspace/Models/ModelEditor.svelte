@@ -720,12 +720,12 @@
 								</button>
 							</div>
 
-							{#if showAdvanced}
-								<div class="my-2">
-									<AdvancedParams admin={true} custom={true} bind:params />
-								</div>
-							{/if}
-						</div>
+						{#if showAdvanced}
+							<div class="my-2">
+								<AdvancedParams admin={true} custom={true} modelEditor={true} bind:params />
+							</div>
+						{/if}
+					</div>
 					</div>
 
 					<hr class=" border-gray-100/30 dark:border-gray-850/30 my-2" />
