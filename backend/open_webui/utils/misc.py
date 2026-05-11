@@ -17,6 +17,8 @@ from open_webui.env import CHAT_STREAM_RESPONSE_CHUNK_MAX_BUFFER_SIZE
 
 log = logging.getLogger(__name__)
 
+_DEFAULT_REASONING_FORMAT = object()
+
 
 def deep_update(d, u):
     for k, v in u.items():
@@ -130,7 +132,11 @@ def get_content_from_message(message: dict) -> Optional[str]:
 
 
 def convert_output_to_messages(
-    output: list, raw: bool = False, *, preserve_reasoning_content: bool = False
+    output: list,
+    raw: bool = False,
+    reasoning_format=_DEFAULT_REASONING_FORMAT,
+    *,
+    preserve_reasoning_content: bool = False,
 ) -> list[dict]:
     """
     Convert OR-aligned output items to OpenAI Chat Completion-format messages.
@@ -141,47 +147,47 @@ def convert_output_to_messages(
 
     Args:
         output: List of OR-aligned output items (Responses API format).
-        raw: If True, include reasoning blocks (with original tags) and code
-             interpreter blocks for LLM re-processing follow-ups.
+        raw: Kept for compatibility with callers that request replay-ready
+             conversion. If ``reasoning_format`` is omitted, raw replay keeps
+             legacy ``<think>`` tags.
+        reasoning_format: How to include reasoning blocks in the output:
+            - None: skip reasoning (default, safe for strict providers).
+            - ``'think_tags'``: wrap in ``<think>`` tags inside content
+              (for Ollama, which expects reasoning as tagged content).
+            - ``'reasoning_content'``: set as ``reasoning_content`` top-level field
+              (for llama.cpp, which routes it via the chat template).
+        preserve_reasoning_content: When enabled for tool-loop replay, store
+             reasoning as ``reasoning_content`` on assistant tool-call messages.
     """
     if not output or not isinstance(output, list):
         return []
 
+    if reasoning_format is _DEFAULT_REASONING_FORMAT:
+        reasoning_format = None if preserve_reasoning_content else ('think_tags' if raw else None)
+
     messages = []
     pending_tool_calls = []
     pending_content = []
+    pending_reasoning = []
 
     def flush_pending():
-        nonlocal pending_content, pending_tool_calls
-        if pending_content or pending_tool_calls:
-            content_parts = []
-            reasoning_parts = []
+        nonlocal pending_content, pending_tool_calls, pending_reasoning
+        if not pending_content and not pending_tool_calls and not pending_reasoning:
+            return
 
-            for item in pending_content:
-                if isinstance(item, str):
-                    content_parts.append(item)
-                    continue
+        message = {
+            'role': 'assistant',
+            'content': '\n'.join(pending_content) if pending_content else '',
+            **({'tool_calls': pending_tool_calls} if pending_tool_calls else {}),
+        }
 
-                if item['type'] == 'content':
-                    content_parts.append(item['text'])
-                elif item['type'] == 'reasoning':
-                    if pending_tool_calls and preserve_reasoning_content:
-                        reasoning_parts.append(item['text'])
-                    else:
-                        content_parts.append(item['wrapped'])
+        if pending_reasoning and (reasoning_format == 'reasoning_content' or pending_tool_calls):
+            message['reasoning_content'] = '\n'.join(pending_reasoning)
 
-            message = {
-                'role': 'assistant',
-                'content': '\n'.join(content_parts) if content_parts else '',
-                **({'tool_calls': pending_tool_calls} if pending_tool_calls else {}),
-            }
-
-            if reasoning_parts and pending_tool_calls:
-                message['reasoning_content'] = '\n'.join(reasoning_parts)
-
-            messages.append(message)
-            pending_content = []
-            pending_tool_calls = []
+        messages.append(message)
+        pending_content = []
+        pending_tool_calls = []
+        pending_reasoning = []
 
     for item in output:
         item_type = item.get('type', '')
@@ -194,7 +200,7 @@ def convert_output_to_messages(
                 if part.get('type') == 'output_text':
                     text += part.get('text', '')
             if text:
-                pending_content.append({'type': 'content', 'text': text})
+                pending_content.append(text)
 
         elif item_type == 'function_call':
             # Collect tool calls to batch into assistant message
@@ -252,38 +258,26 @@ def convert_output_to_messages(
                 )
 
         elif item_type == 'reasoning':
-            if raw:
-                # Include reasoning with original tags for LLM re-processing
-                reasoning_text = ''
-                source_list = item.get('summary', []) or item.get('content', [])
-                for part in source_list:
-                    if part.get('type') == 'output_text':
-                        reasoning_text += part.get('text', '')
-                    elif 'text' in part:
-                        reasoning_text += part.get('text', '')
+            if not reasoning_format and not preserve_reasoning_content:
+                continue
 
-                if preserve_reasoning_content:
-                    if reasoning_text.strip():
-                        start_tag = item.get('start_tag', '<think>')
-                        end_tag = item.get('end_tag', '</think>')
-                        pending_content.append(
-                            {
-                                'type': 'reasoning',
-                                'text': reasoning_text,
-                                'wrapped': f'{start_tag}{reasoning_text}{end_tag}',
-                            }
-                        )
-                elif reasoning_text:
+            reasoning_text = ''
+            source_list = item.get('summary', []) or item.get('content', [])
+            for part in source_list:
+                if part.get('type') == 'output_text':
+                    reasoning_text += part.get('text', '')
+                elif 'text' in part:
+                    reasoning_text += part.get('text', '')
+
+            if reasoning_text:
+                if reasoning_format == 'think_tags':
+                    # Ollama: embed in content with the item's original tags
                     start_tag = item.get('start_tag', '<think>')
                     end_tag = item.get('end_tag', '</think>')
                     pending_content.append(f'{start_tag}{reasoning_text}{end_tag}')
-                    # NOTE: Some providers (e.g. Moonshot/Kimi K2.5) require
-                    # reasoning_content as a top-level field on assistant
-                    # messages.  This should be handled externally via a
-                    # pipeline filter or connection-level middleware, not
-                    # here — adding it universally breaks strict providers
-                    # (OpenAI, Vertex AI, Azure) that reject unknown fields.
-            # else: skip reasoning blocks for normal LLM messages
+                elif reasoning_format == 'reasoning_content' or preserve_reasoning_content:
+                    # llama.cpp or explicit tool-loop preservation.
+                    pending_reasoning.append(reasoning_text)
 
         elif item_type == 'open_webui:code_interpreter':
             # Always include code interpreter content so the LLM knows
@@ -292,7 +286,7 @@ def convert_output_to_messages(
             code_output = item.get('output', '')
 
             if code:
-                pending_content.append({'type': 'content', 'text': f'<code_interpreter>\n{code}\n</code_interpreter>'})
+                pending_content.append(f'<code_interpreter>\n{code}\n</code_interpreter>')
 
             if code_output:
                 if isinstance(code_output, dict):
@@ -302,12 +296,7 @@ def convert_output_to_messages(
                 else:
                     output_text = str(code_output)
                 if output_text:
-                    pending_content.append(
-                        {
-                            'type': 'content',
-                            'text': f'<code_interpreter_output>\n{output_text}\n</code_interpreter_output>',
-                        }
-                    )
+                    pending_content.append(f'<code_interpreter_output>\n{output_text}\n</code_interpreter_output>')
 
         elif item_type.startswith('open_webui:'):
             # Skip other extension types
