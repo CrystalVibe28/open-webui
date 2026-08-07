@@ -73,6 +73,7 @@ def remove_open_webui_params(params: dict) -> dict:
         'function_calling': str,
         'reasoning_tags': list,
         'system': str,
+        'preserve_reasoning_content': bool,
     }
 
     for key in list(params.keys()):

@@ -2069,6 +2069,7 @@ def apply_params_to_form_data(form_data, model):
         'function_calling': str,
         'reasoning_tags': list,
         'system': str,
+        'preserve_reasoning_content': bool,
     }
 
     for key in list(params.keys()):

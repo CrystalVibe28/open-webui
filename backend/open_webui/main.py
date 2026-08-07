@@ -1738,7 +1738,6 @@ async def chat_completion(
         reasoning_tags = request_params.get('reasoning_tags')
         preserve_reasoning_content = _resolve_preserve_reasoning_content(
             request_params,
-            model_info_params,
             model_own_params,
         )
 
@@ -2180,7 +2179,6 @@ app.state.CHAT_COMPLETION_HANDLER = chat_completion
 
 def _resolve_preserve_reasoning_content(
     request_params: dict | None,
-    model_info_params: dict | None,
     model_own_params: dict | None,
 ):
     request_params = request_params or {}

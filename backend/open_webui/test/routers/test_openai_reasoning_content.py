@@ -3,7 +3,9 @@ import copy
 import inspect
 import sys
 import types
+from collections.abc import Callable
 from pathlib import Path
+from typing import Optional
 
 sys.path.append(str(Path(__file__).resolve().parents[3]))
 sys.modules.setdefault('mimeparse', types.ModuleType('mimeparse'))
@@ -41,6 +43,30 @@ def _load_openai_router_symbols() -> tuple[dict[str, set[str]], object, object]:
         namespace['_normalize_stored_item'],
         namespace['convert_to_responses_payload'],
     )
+
+
+def _load_payload_symbols() -> object:
+    payload_path = BACKEND_ROOT / 'open_webui' / 'utils' / 'payload.py'
+    module = ast.parse(payload_path.read_text(encoding='utf-8'))
+
+    selected_nodes = []
+    for node in module.body:
+        if isinstance(node, ast.FunctionDef) and node.name in {
+            'remove_open_webui_params',
+            'apply_model_params_to_body',
+            'apply_model_params_to_body_openai',
+        }:
+            selected_nodes.append(node)
+
+    compiled_module = ast.Module(body=selected_nodes, type_ignores=[])
+    ast.fix_missing_locations(compiled_module)
+
+    namespace: dict[str, object] = {
+        'Callable': Callable,
+        'Optional': Optional,
+    }
+    exec(compile(compiled_module, str(payload_path), 'exec'), namespace)
+    return namespace['apply_model_params_to_body_openai']
 
 
 def _convert_output_to_messages(
@@ -239,3 +265,14 @@ def test_convert_to_responses_payload_recursively_strips_chat_reasoning_content(
         'instructions': 'Be precise.',
     }
     assert _find_key_paths(converted, 'reasoning_content') == []
+
+
+def test_apply_model_params_to_body_openai_strips_preserve_reasoning_content() -> None:
+    apply_model_params_to_body_openai = _load_payload_symbols()
+
+    payload = apply_model_params_to_body_openai(
+        {'preserve_reasoning_content': True, 'temperature': 0.2},
+        {'model': 'x'},
+    )
+
+    assert payload == {'model': 'x', 'temperature': 0.2}
