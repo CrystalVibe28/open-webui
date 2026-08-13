@@ -64,6 +64,29 @@ async def get_all_base_models(request: Request, user: UserModel = None):
     return function_models + openai_models + ollama_models
 
 
+async def get_upstream_context_window(base_model_id, custom_model_lookup, base_model_lookup):
+    # First context_window set along the upstream chain wins; custom models are
+    # resolved before native/arena base models. None if the whole chain is unset.
+    visited = set()
+    current_id = base_model_id
+    while current_id and current_id not in visited:
+        visited.add(current_id)
+        upstream = custom_model_lookup.get(current_id)
+        if upstream is not None:
+            if upstream.meta.context_window is not None:
+                return upstream.meta.context_window
+            current_id = upstream.base_model_id
+            continue
+        base_model = base_model_lookup.get(current_id)
+        if base_model is None:
+            base_model = base_model_lookup.get(current_id.split(':')[0])
+        if base_model is None:
+            return None
+        base_meta = (base_model.get('info') or {}).get('meta') or {}
+        return base_meta.get('context_window')
+    return None
+
+
 async def get_all_models(request, refresh: bool = False, user: UserModel = None):
     config = await Config.get_many(
         'models.base_models_cache',
@@ -144,6 +167,7 @@ async def get_all_models(request, refresh: bool = False, user: UserModel = None)
         enabled_filter_ids = set()
 
     custom_models = await Models.get_all_models()
+    custom_model_lookup = {m.id: m for m in custom_models}
 
     # Single O(1) lookup: Ollama base names first, then exact IDs (exact wins).
     base_model_lookup = {}
@@ -162,7 +186,12 @@ async def get_all_models(request, refresh: bool = False, user: UserModel = None)
             if model:
                 if custom_model.is_active:
                     model['name'] = custom_model.name
+                    base_meta = (model.get('info') or {}).get('meta') or {}
                     model['info'] = custom_model.model_dump()
+                    meta = model['info'].get('meta') or {}
+                    if meta.get('context_window') is None and base_meta.get('context_window') is not None:
+                        meta['context_window'] = base_meta['context_window']
+                        model['info']['meta'] = meta
                     schema = get_chat_variables_schema(custom_model.params.model_dump().get('system'))
                     if schema:
                         model['info'].setdefault('meta', {})['chat_variables_schema'] = schema
@@ -221,6 +250,15 @@ async def get_all_models(request, refresh: bool = False, user: UserModel = None)
             if 'params' in info:
                 # Remove params to avoid exposing sensitive info
                 del info['params']
+
+            meta = info.get('meta') or {}
+            if meta.get('context_window') is None:
+                inherited_context_window = await get_upstream_context_window(
+                    custom_model.base_model_id, custom_model_lookup, base_model_lookup
+                )
+                if inherited_context_window is not None:
+                    meta['context_window'] = inherited_context_window
+                    info['meta'] = meta
 
             model['info'] = info
 
