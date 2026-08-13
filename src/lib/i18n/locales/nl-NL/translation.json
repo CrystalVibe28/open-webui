@@ -613,6 +613,7 @@
 	"Context Compaction Prompt": "",
 	"Context Compaction Threshold": "",
 	"Context Tokens": "",
+	"Context Window": "",
 	"Continue": "",
 	"Continue Response": "Doorgaan met antwoord",
 	"Continue with {{provider}}": "Ga verder met {{provider}}",

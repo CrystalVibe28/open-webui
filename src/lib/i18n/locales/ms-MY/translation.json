@@ -605,6 +605,7 @@
 	"Context Compaction Prompt": "",
 	"Context Compaction Threshold": "",
 	"Context Tokens": "Token Konteks",
+	"Context Window": "",
 	"Continue": "",
 	"Continue Response": "Teruskan Respons",
 	"Continue with {{provider}}": "Teruskan dengan {{provider}}",

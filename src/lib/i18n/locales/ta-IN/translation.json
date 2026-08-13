@@ -613,6 +613,7 @@
 	"Context Compaction Prompt": "",
 	"Context Compaction Threshold": "",
 	"Context Tokens": "",
+	"Context Window": "",
 	"Continue": "",
 	"Continue Response": "பதிலைத் தொடரவும்",
 	"Continue with {{provider}}": "{{provider}} உடன் தொடரவும்",

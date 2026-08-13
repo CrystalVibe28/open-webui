@@ -621,6 +621,7 @@
 	"Context Compaction Prompt": "",
 	"Context Compaction Threshold": "",
 	"Context Tokens": "Tokens de contexte",
+	"Context Window": "",
 	"Continue": "",
 	"Continue Response": "Continuer la réponse",
 	"Continue with {{provider}}": "Continuer avec {{provider}}",

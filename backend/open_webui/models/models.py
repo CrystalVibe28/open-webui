@@ -69,6 +69,7 @@ class ModelMeta(BaseModel):
 
     profile_image_url: str | None = None
     description: str | None = Field(default=None, description='User-facing description of the model.')
+    context_window: int | None = Field(default=None, gt=0, strict=True)
     capabilities: dict | None = None
     knowledge: list[Any] | None = None
 

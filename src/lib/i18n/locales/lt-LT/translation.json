@@ -629,6 +629,7 @@
 	"Context Compaction Prompt": "",
 	"Context Compaction Threshold": "",
 	"Context Tokens": "",
+	"Context Window": "",
 	"Continue": "",
 	"Continue Response": "Tęsti atsakymą",
 	"Continue with {{provider}}": "Tęsti su {{provider}}",

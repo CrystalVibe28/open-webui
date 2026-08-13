@@ -613,6 +613,7 @@
 	"Context Compaction Prompt": "",
 	"Context Compaction Threshold": "",
 	"Context Tokens": "Bağlam Tokenleri",
+	"Context Window": "",
 	"Continue": "",
 	"Continue Response": "Yanıta Devam Et",
 	"Continue with {{provider}}": "{{provider}} ile devam et",

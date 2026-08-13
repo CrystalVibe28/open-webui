@@ -613,6 +613,7 @@
 	"Context Compaction Prompt": "Kontekstin tiivistyksen kehote",
 	"Context Compaction Threshold": "Kontekstin tiivistyksen kynnys",
 	"Context Tokens": "Konteksti tokenit",
+	"Context Window": "",
 	"Continue": "Jatka",
 	"Continue Response": "Jatka vastausta",
 	"Continue with {{provider}}": "Jatka palvelulla {{provider}}",

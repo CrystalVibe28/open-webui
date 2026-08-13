@@ -621,6 +621,7 @@
 	"Context Compaction Prompt": "",
 	"Context Compaction Threshold": "",
 	"Context Tokens": "",
+	"Context Window": "",
 	"Continue": "",
 	"Continue Response": "Настави одговор",
 	"Continue with {{provider}}": "Настави са {{provider}}",

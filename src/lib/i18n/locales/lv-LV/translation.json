@@ -621,6 +621,7 @@
 	"Context Compaction Prompt": "",
 	"Context Compaction Threshold": "",
 	"Context Tokens": "",
+	"Context Window": "",
 	"Continue": "",
 	"Continue Response": "Turpināt atbildi",
 	"Continue with {{provider}}": "Turpināt ar {{provider}}",

@@ -613,6 +613,7 @@
 	"Context Compaction Prompt": "",
 	"Context Compaction Threshold": "",
 	"Context Tokens": "",
+	"Context Window": "",
 	"Continue": "",
 	"Continue Response": "ردعمل جاری رکھیں",
 	"Continue with {{provider}}": "{{provider}} کے ساتھ جاری رکھیں",

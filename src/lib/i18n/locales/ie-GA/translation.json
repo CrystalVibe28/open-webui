@@ -613,6 +613,7 @@
 	"Context Compaction Prompt": "",
 	"Context Compaction Threshold": "",
 	"Context Tokens": "Comharthaí Comhthéacs",
+	"Context Window": "",
 	"Continue": "",
 	"Continue Response": "Leanúint ar aghaidh",
 	"Continue with {{provider}}": "Lean ar aghaidh le {{provider}}",
