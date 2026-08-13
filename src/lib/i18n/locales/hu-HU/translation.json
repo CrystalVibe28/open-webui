@@ -613,6 +613,7 @@
 	"Context Compaction Prompt": "",
 	"Context Compaction Threshold": "",
 	"Context Tokens": "",
+	"Context Window": "",
 	"Continue": "",
 	"Continue Response": "Válasz folytatása",
 	"Continue with {{provider}}": "Folytatás {{provider}} szolgáltatóval",

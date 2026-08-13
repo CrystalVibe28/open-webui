@@ -605,6 +605,7 @@
 	"Context Compaction Prompt": "",
 	"Context Compaction Threshold": "",
 	"Context Tokens": "上下文 Token",
+	"Context Window": "上下文窗口",
 	"Continue": "",
 	"Continue Response": "繼續回應",
 	"Continue with {{provider}}": "使用 {{provider}} 繼續",

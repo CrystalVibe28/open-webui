@@ -621,6 +621,7 @@
 	"Context Compaction Prompt": "Petició de compactació de context",
 	"Context Compaction Threshold": "Llindar de compactació del context",
 	"Context Tokens": "Tokens de context",
+	"Context Window": "",
 	"Continue": "Continua",
 	"Continue Response": "Continuar la resposta",
 	"Continue with {{provider}}": "Continuar amb {{provider}}",

@@ -645,6 +645,7 @@
 	"Context Compaction Prompt": "",
 	"Context Compaction Threshold": "",
 	"Context Tokens": "",
+	"Context Window": "",
 	"Continue": "",
 	"Continue Response": "متابعة الرد",
 	"Continue with {{provider}}": "متابعة مع {{provider}}",

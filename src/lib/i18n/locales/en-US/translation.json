@@ -613,6 +613,7 @@
 	"Context Compaction Prompt": "",
 	"Context Compaction Threshold": "",
 	"Context Tokens": "",
+	"Context Window": "Context Window",
 	"Continue": "",
 	"Continue Response": "",
 	"Continue with {{provider}}": "",

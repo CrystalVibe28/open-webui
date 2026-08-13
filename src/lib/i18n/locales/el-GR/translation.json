@@ -613,6 +613,7 @@
 	"Context Compaction Prompt": "",
 	"Context Compaction Threshold": "",
 	"Context Tokens": "",
+	"Context Window": "",
 	"Continue": "",
 	"Continue Response": "Συνέχεια Απάντησης",
 	"Continue with {{provider}}": "Συνέχεια με {{provider}}",

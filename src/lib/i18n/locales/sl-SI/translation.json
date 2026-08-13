@@ -629,6 +629,7 @@
 	"Context Compaction Prompt": "Context Compaction Prompt",
 	"Context Compaction Threshold": "Context Compaction Threshold",
 	"Context Tokens": "Žetoni konteksta",
+	"Context Window": "",
 	"Continue": "Nadaljuj",
 	"Continue Response": "Nadaljuj odgovor",
 	"Continue with {{provider}}": "Continue with {{provider}}",

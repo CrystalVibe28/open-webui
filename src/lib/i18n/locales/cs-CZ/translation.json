@@ -629,6 +629,7 @@
 	"Context Compaction Prompt": "",
 	"Context Compaction Threshold": "",
 	"Context Tokens": "",
+	"Context Window": "",
 	"Continue": "",
 	"Continue Response": "Pokračovat v odpovědi",
 	"Continue with {{provider}}": "Pokračovat s {{provider}}",

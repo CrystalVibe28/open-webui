@@ -613,6 +613,7 @@
 	"Context Compaction Prompt": "Prompt für Kontextverdichtung",
 	"Context Compaction Threshold": "Schwellenwert für Kontextverdichtung",
 	"Context Tokens": "Kontext-Token",
+	"Context Window": "",
 	"Continue": "Fortfahren",
 	"Continue Response": "Antwort fortsetzen",
 	"Continue with {{provider}}": "Mit {{provider}} fortfahren",

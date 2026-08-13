@@ -606,6 +606,7 @@
 	"Context Compaction Prompt": "",
 	"Context Compaction Threshold": "",
 	"Context Tokens": "",
+	"Context Window": "",
 	"Continue": "",
 	"Continue Response": "응답 이어 받기",
 	"Continue with {{provider}}": "{{provider}}로 계속",

@@ -83,6 +83,7 @@
 		meta: {
 			profile_image_url: `${WEBUI_BASE_URL}/static/favicon.png`,
 			description: '',
+			context_window: null as number | null | undefined,
 			suggestion_prompts: null,
 			tags: []
 		},
@@ -831,6 +832,26 @@
 											{/if}
 										</div>
 									{/if}
+								</div>
+
+								<div>
+									<label
+										for="workspace-model-context-window"
+										class="mb-1 block text-xs text-gray-600 dark:text-gray-400"
+									>
+										{$i18n.t('Context Window')}
+									</label>
+									<input
+										id="workspace-model-context-window"
+										type="number"
+										min="1"
+										step="1"
+										inputmode="numeric"
+										autocomplete="off"
+										placeholder={$i18n.t('Default')}
+										bind:value={info.meta.context_window}
+										class="block w-full bg-transparent py-1 text-[0.8125rem] text-gray-700 outline-hidden placeholder:text-gray-300 dark:text-gray-300 dark:placeholder:text-gray-700"
+									/>
 								</div>
 
 								<div class="flex h-7 w-full justify-between">

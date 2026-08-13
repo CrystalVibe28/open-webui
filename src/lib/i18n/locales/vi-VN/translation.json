@@ -605,6 +605,7 @@
 	"Context Compaction Prompt": "",
 	"Context Compaction Threshold": "",
 	"Context Tokens": "",
+	"Context Window": "",
 	"Continue": "",
 	"Continue Response": "Tiếp tục trả lời",
 	"Continue with {{provider}}": "Tiếp tục với {{provider}}",
