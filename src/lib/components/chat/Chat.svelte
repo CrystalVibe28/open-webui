@@ -67,6 +67,12 @@
 	} from '$lib/utils';
 	import { AudioQueue } from '$lib/utils/audio';
 	import { createTemporaryChatId, isTemporaryChatId } from '$lib/utils/chatId';
+	import {
+		countToolUsageItems,
+		findLatestModelContextUsage,
+		getLatestInputTokens,
+		type ModelContextUsage
+	} from '$lib/utils/modelContextUsage';
 	import { getOutputText } from './Messages/structuredOutput';
 
 	import {
@@ -382,6 +388,190 @@
 
 	let taskIds = null;
 
+	type PendingModelContextUsage = {
+		modelId: string;
+		baselineToolCount: number;
+		hasToolActivity: boolean;
+		inputTokens?: number;
+		hadUsage: boolean;
+		previousUsage?: Record<string, unknown>;
+		hadInfoUsage: boolean;
+		previousInfoUsage?: Record<string, unknown>;
+		hadError: boolean;
+		previousError?: Record<string, unknown>;
+	};
+	type ModelContextUsageCandidate = ModelContextUsage & { messageId: string };
+
+	let committedModelContextUsage: ModelContextUsage | null = null;
+	let previewModelContextUsage: ModelContextUsageCandidate | null = null;
+	let pendingModelContextUsage = new Map<string, PendingModelContextUsage>();
+	let modelContextUsage: ModelContextUsage | null = null;
+	$: modelContextUsage = previewModelContextUsage ?? committedModelContextUsage;
+
+	const getEffectiveSingleModelId = () => {
+		const modelIds = atSelectedModel !== undefined ? [atSelectedModel.id] : selectedModels;
+		return modelIds.length === 1 && modelIds[0] ? modelIds[0] : null;
+	};
+
+	const isMessageOnActiveBranch = (messageId: string) =>
+		Boolean(
+			history?.currentId &&
+			createMessagesList(history, history.currentId).some(
+				(message: any) => message.id === messageId
+			)
+		);
+
+	const clearContextUsagePreview = () => {
+		previewModelContextUsage = null;
+	};
+
+	const rollbackPendingModelContextUsage = (messageId: string) => {
+		const pending = pendingModelContextUsage.get(messageId);
+		const message = history?.messages?.[messageId];
+		if (!pending || !message) return;
+
+		if (pending.hadUsage) message.usage = structuredClone(pending.previousUsage);
+		else delete message.usage;
+
+		message.info = { ...(message.info ?? {}) };
+		if (pending.hadInfoUsage) message.info.usage = structuredClone(pending.previousInfoUsage);
+		else delete message.info.usage;
+
+		if (pending.hadError) message.error = structuredClone(pending.previousError);
+		else delete message.error;
+	};
+
+	const clearPendingModelContextUsage = (messageIds?: string[]) => {
+		const ids = messageIds ?? [...pendingModelContextUsage.keys()];
+
+		for (const messageId of ids) {
+			rollbackPendingModelContextUsage(messageId);
+			pendingModelContextUsage.delete(messageId);
+		}
+		if (previewModelContextUsage && ids.includes(previewModelContextUsage.messageId)) {
+			clearContextUsagePreview();
+		}
+	};
+
+	const clearModelContextUsage = () => {
+		committedModelContextUsage = null;
+		clearPendingModelContextUsage();
+	};
+
+	const beginModelContextUsage = (message: any) => {
+		if (!message?.id || !message?.model) return;
+		const modelId = message.selectedModelId ?? message.model;
+		const baselineToolCount = countToolUsageItems(message.output);
+		const baselineInputTokens = getLatestInputTokens(message?.usage ?? message?.info?.usage);
+		const storedCheckpoint = message?.meta?.model_context_usage;
+		const existingCheckpoint =
+			message?.info?.modelContextUsage ??
+			(storedCheckpoint
+				? {
+						modelId: storedCheckpoint.model_id,
+						inputTokens: storedCheckpoint.input_tokens
+					}
+				: null);
+		const hasValidCheckpoint =
+			existingCheckpoint?.modelId === modelId &&
+			Number.isSafeInteger(existingCheckpoint?.inputTokens) &&
+			existingCheckpoint.inputTokens > 0;
+		if (
+			!hasValidCheckpoint &&
+			!message.selectedModelId &&
+			!message.arena &&
+			!message.error &&
+			baselineInputTokens
+		) {
+			const checkpoint = { modelId, inputTokens: baselineInputTokens };
+			message.info = {
+				...(message.info ?? {}),
+				modelContextUsage: checkpoint
+			};
+			message.meta = {
+				...(message.meta ?? {}),
+				model_context_usage: { model_id: modelId, input_tokens: baselineInputTokens }
+			};
+		}
+		pendingModelContextUsage.set(message.id, {
+			modelId,
+			baselineToolCount,
+			hasToolActivity: false,
+			hadUsage: Object.prototype.hasOwnProperty.call(message, 'usage'),
+			previousUsage: message.usage ? structuredClone(message.usage) : undefined,
+			hadInfoUsage: Object.prototype.hasOwnProperty.call(message?.info ?? {}, 'usage'),
+			previousInfoUsage: message?.info?.usage ? structuredClone(message.info.usage) : undefined,
+			hadError: Object.prototype.hasOwnProperty.call(message, 'error'),
+			previousError: message.error ? structuredClone(message.error) : undefined
+		});
+		if (previewModelContextUsage?.messageId === message.id) clearContextUsagePreview();
+	};
+
+	const updateModelContextUsagePreview = (message: any) => {
+		const pending = pendingModelContextUsage.get(message?.id);
+		if (!pending) return;
+
+		pending.hasToolActivity =
+			pending.hasToolActivity || countToolUsageItems(message.output) > pending.baselineToolCount;
+		if (
+			pending.hasToolActivity &&
+			pending.inputTokens &&
+			pending.modelId === getEffectiveSingleModelId() &&
+			isMessageOnActiveBranch(message.id)
+		) {
+			previewModelContextUsage = {
+				messageId: message.id,
+				modelId: pending.modelId,
+				inputTokens: pending.inputTokens
+			};
+		}
+	};
+
+	const recordModelContextUsage = (message: any, usage: Record<string, unknown>) => {
+		const pending = pendingModelContextUsage.get(message?.id);
+		const inputTokens = getLatestInputTokens(usage);
+		if (!pending || !inputTokens) return;
+
+		pending.inputTokens = inputTokens;
+		updateModelContextUsagePreview(message);
+	};
+
+	const settleModelContextUsage = (message: any) => {
+		pendingModelContextUsage.delete(message?.id);
+		if (previewModelContextUsage?.messageId === message?.id) clearContextUsagePreview();
+	};
+
+	const commitCompletedModelContextUsage = (message: any) => {
+		if (!pendingModelContextUsage.has(message?.id) || message?.error) return;
+		if (message?.selectedModelId || message?.arena) return;
+		const modelId = message?.selectedModelId ?? message?.model;
+		const inputTokens = getLatestInputTokens(message?.usage ?? message?.info?.usage);
+		if (!modelId || !inputTokens) return;
+
+		const checkpoint = { modelId, inputTokens };
+		message.info = { ...(message.info ?? {}), modelContextUsage: checkpoint };
+		message.meta = {
+			...(message.meta ?? {}),
+			model_context_usage: { model_id: modelId, input_tokens: inputTokens }
+		};
+
+		if (modelId === getEffectiveSingleModelId() && isMessageOnActiveBranch(message.id)) {
+			committedModelContextUsage = checkpoint;
+		}
+	};
+
+	const hydrateModelContextUsage = () => {
+		const modelId = getEffectiveSingleModelId();
+		committedModelContextUsage =
+			modelId && history?.currentId
+				? findLatestModelContextUsage(createMessagesList(history, history.currentId), modelId)
+				: null;
+	};
+
+	const handleModelContextBranchChange = () => {
+		clearContextUsagePreview();
+	};
+
 	// Chat Input
 	let prompt = '';
 	let chatFiles = [];
@@ -487,6 +677,8 @@
 	}
 
 	const onSelectedModelIdsChange = () => {
+		committedModelContextUsage = null;
+		clearContextUsagePreview();
 		resetInput();
 		oldSelectedModelIds = structuredClone(selectedModelIds);
 	};
@@ -616,6 +808,7 @@
 	};
 
 	const initEmbeddedDraft = async () => {
+		clearModelContextUsage();
 		clearTimeout(saveControlsTimer);
 		await saveControls();
 
@@ -974,6 +1167,7 @@
 					handleContextCompactionStatus(data);
 				} else if (type === 'chat:active') {
 					if (!data?.active) {
+						clearPendingModelContextUsage();
 						taskIds = null;
 						if ($chatId && !$temporaryChatEnabled && hasPendingAssistantLeaf()) {
 							await loadChat();
@@ -986,6 +1180,11 @@
 					chatCompletionEventHandler(data, message, event.chat_id);
 				} else if (type === 'chat:tasks:cancel') {
 					dismissContextCompactionToast();
+					clearPendingModelContextUsage(
+						message?.parentId && history.messages[message.parentId]
+							? history.messages[message.parentId].childrenIds
+							: [message.id]
+					);
 					if (event.message_id === history.currentId) {
 						taskIds = null;
 						// Set all response messages to done
@@ -1016,6 +1215,7 @@
 						}
 					}, 100);
 				} else if (type === 'chat:message:error') {
+					clearPendingModelContextUsage([message.id]);
 					message.error = data.error;
 				} else if (type === 'chat:message:follow_ups') {
 					message.followUps = data.follow_ups;
@@ -1696,6 +1896,7 @@
 
 	const initNewChat = async () => {
 		console.log('initNewChat');
+		clearModelContextUsage();
 		resetWebSearchConfirmation();
 
 		// Mark the outgoing chat as read before resetting; in-place created chats
@@ -1941,6 +2142,7 @@
 
 	const loadChat = async () => {
 		noteChatDebug('loadChat start');
+		clearModelContextUsage();
 		// chatIdProp is empty for chats started from the home page (URL set via replaceState)
 		chatId.set(chatIdProp || $chatId);
 		noteChatDebug('loadChat set active chat id');
@@ -2018,6 +2220,11 @@
 				// Sanitize history: repair orphaned references and structurally-malformed
 				// nodes from failed regenerations (#24424, #24157, #20474)
 				sanitizeHistory(history);
+				hydrateModelContextUsage();
+				const loadedCurrentMessage = history.currentId ? history.messages[history.currentId] : null;
+				if (loadedCurrentMessage?.role === 'assistant' && loadedCurrentMessage?.done !== true) {
+					beginModelContextUsage(loadedCurrentMessage);
+				}
 
 				chatTitle.set(chatContent.title);
 
@@ -2075,6 +2282,7 @@
 					taskIds = pendingTaskIds;
 				} else {
 					taskIds = null;
+					if (currentMessage?.id) clearPendingModelContextUsage([currentMessage.id]);
 					// No active tasks and message incomplete → generation was interrupted
 					if (currentMessage?.role === 'assistant' && !currentMessage.done) {
 						currentMessage.done = true;
@@ -2381,6 +2589,7 @@
 		if (output) {
 			message.output = output;
 			message.content = getOutputText(output);
+			updateModelContextUsagePreview(message);
 			dispatchCallOverlayAudio(message);
 		}
 
@@ -2430,12 +2639,15 @@
 
 		if (usage) {
 			message.usage = usage;
+			recordModelContextUsage(message, usage);
 		}
 
 		history.messages[message.id] = message;
 
 		if (done) {
 			message.done = true;
+			commitCompletedModelContextUsage(message);
+			settleModelContextUsage(message);
 			const visibleContent =
 				getOutputText(message?.output) || removeAllDetails(message?.content ?? '');
 
@@ -2823,6 +3035,7 @@
 					modelIdx: modelIdx ? modelIdx : _modelIdx,
 					timestamp: Math.floor(Date.now() / 1000) // Unix epoch
 				};
+				beginModelContextUsage(responseMessage);
 
 				// Add message to history and Set currentId to messageId
 				history.messages[responseMessageId] = responseMessage;
@@ -3182,7 +3395,7 @@
 					follow_up_generation: $settings?.autoFollowUps ?? true
 				},
 
-				...(stream && (model.info?.meta?.capabilities?.usage ?? false)
+				...(stream && model.info?.meta?.capabilities?.usage === true
 					? {
 							stream_options: {
 								include_usage: true
@@ -3193,6 +3406,7 @@
 			`${WEBUI_BASE_URL}/api`
 		).catch(async (error) => {
 			console.log(error);
+			clearPendingModelContextUsage([responseMessage.id]);
 
 			let errorMessage = error;
 			if (error?.error?.message) {
@@ -3259,6 +3473,7 @@
 	};
 
 	const handleOpenAIError = async (error, responseMessage) => {
+		clearPendingModelContextUsage([responseMessage.id]);
 		let errorMessage = '';
 		let innerError;
 
@@ -3301,6 +3516,7 @@
 	};
 
 	const stopResponse = async (processQueue = true) => {
+		clearPendingModelContextUsage();
 		if (taskIds) {
 			if ($chatId) {
 				await stopTasksByChatId(localStorage.token, $chatId).catch((error) => {
@@ -3416,6 +3632,8 @@
 
 		if (history.currentId && history.messages[history.currentId].done == true) {
 			const responseMessage = history.messages[history.currentId];
+			beginModelContextUsage(responseMessage);
+			delete responseMessage.error;
 			responseMessage.done = false;
 			await tick();
 
@@ -3923,6 +4141,7 @@
 										className={embedded ? 'h-full flex pt-4' : 'h-full flex pt-18'}
 										{sendMessage}
 										{showMessage}
+										onBranchChange={handleModelContextBranchChange}
 										{submitMessage}
 										{continueResponse}
 										{regenerateResponse}
@@ -3971,6 +4190,7 @@
 										dropzoneId={messageInputDropzoneId}
 										chatId={$chatId}
 										{contextUsage}
+										{modelContextUsage}
 										{contextCompactionEnabled}
 										compactHandler={handleManualCompact}
 										statusHandler={handleStatusCommand}
@@ -4090,6 +4310,7 @@
 										dropzoneId={messageInputDropzoneId}
 										chatId={$chatId}
 										{contextUsage}
+										{modelContextUsage}
 										{contextCompactionEnabled}
 										compactHandler={handleManualCompact}
 										statusHandler={handleStatusCommand}

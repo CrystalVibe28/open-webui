@@ -33,6 +33,7 @@
 	export let editCodeBlock = true;
 
 	export let setInputText: Function = () => {};
+	export let onBranchChange: Function = () => {};
 	export let updateChat: Function;
 	export let editMessage: Function;
 	export let saveMessage: Function;
@@ -95,6 +96,7 @@
 
 		// Update the current message ID in history
 		history.currentId = messageId;
+		onBranchChange();
 
 		// Await UI updates
 		await tick();
@@ -118,6 +120,7 @@
 		}
 
 		history.currentId = messageId;
+		onBranchChange();
 
 		await tick();
 		await updateChat();
@@ -141,6 +144,7 @@
 		}
 
 		history.currentId = messageId;
+		onBranchChange();
 
 		await tick();
 		await updateChat();
@@ -214,6 +218,7 @@
 				messageChildrenIds = history.messages[currentMessageId].childrenIds;
 			}
 			history.currentId = currentMessageId;
+			onBranchChange();
 			selectedModelIdx = modelIdx;
 
 			// await tick();

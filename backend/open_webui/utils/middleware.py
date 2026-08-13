@@ -5,6 +5,7 @@ import copy
 import inspect
 import json
 import logging
+import math
 import os
 import random
 import re
@@ -3563,8 +3564,58 @@ async def outlet_filter_handler(ctx):
         log.debug(f'Error running outlet filters: {e}')
 
 
+def get_model_context_usage_checkpoint(usage: dict | None, model_id: str | None) -> dict | None:
+    if not usage or not model_id:
+        return None
+
+    for key in ('prompt_tokens', 'input_tokens', 'prompt_eval_count', 'prompt_n'):
+        input_tokens = usage.get(key)
+        if (
+            isinstance(input_tokens, bool)
+            or not isinstance(input_tokens, (int, float))
+            or (isinstance(input_tokens, float) and not math.isfinite(input_tokens))
+            or input_tokens <= 0
+            or input_tokens > 9_007_199_254_740_991
+            or input_tokens != int(input_tokens)
+        ):
+            continue
+
+        return {
+            'model_id': model_id,
+            'input_tokens': int(input_tokens),
+        }
+
+    return None
+
+
+async def persist_model_context_usage_checkpoint(
+    chat_id: str,
+    message_id: str,
+    model_id: str | None,
+    usage: dict | None,
+) -> None:
+    checkpoint = get_model_context_usage_checkpoint(usage, model_id)
+    if not checkpoint:
+        return
+
+    message = await Chats.get_message_by_id_and_message_id(chat_id, message_id)
+    meta = message.get('meta') if message else None
+    await Chats.upsert_message_to_chat_by_id_and_message_id(
+        chat_id,
+        message_id,
+        {
+            'meta': {
+                **(meta if isinstance(meta, dict) else {}),
+                'model_context_usage': checkpoint,
+            }
+        },
+        touch=False,
+    )
+
+
 async def non_streaming_chat_response_handler(response, ctx):
     request = ctx['request']
+    form_data = ctx['form_data']
 
     user = ctx['user']
     metadata = ctx['metadata']
@@ -3578,6 +3629,17 @@ async def non_streaming_chat_response_handler(response, ctx):
 
     chat_id = metadata.get('chat_id') or ''
     save_to_chat = is_saved_chat_id(chat_id)
+    response_failed = bool(response_data.get('error'))
+
+    if save_to_chat and not (metadata.get('selected_model_id') or response_data.get('selected_model_id')):
+        previous_message = await Chats.get_message_by_id_and_message_id(metadata['chat_id'], metadata['message_id'])
+        if previous_message and not previous_message.get('error'):
+            await persist_model_context_usage_checkpoint(
+                metadata['chat_id'],
+                metadata['message_id'],
+                previous_message.get('model') or metadata.get('model_id') or form_data.get('model'),
+                previous_message.get('usage') or (previous_message.get('info') or {}).get('usage'),
+            )
 
     if event_emitter:
         try:
@@ -3689,9 +3751,22 @@ async def non_streaming_chat_response_handler(response, ctx):
                                 'done': True,
                                 'role': 'assistant',
                                 'output': response_output,
+                                **({'error': None} if not response_failed else {}),
                                 **({'usage': usage} if usage else {}),
                             },
                         )
+                        if not response_failed and not (
+                            metadata.get('selected_model_id') or response_data.get('selected_model_id')
+                        ):
+                            message = await Chats.get_message_by_id_and_message_id(
+                                metadata['chat_id'], metadata['message_id']
+                            )
+                            await persist_model_context_usage_checkpoint(
+                                metadata['chat_id'],
+                                metadata['message_id'],
+                                (message or {}).get('model') or metadata.get('model_id') or form_data.get('model'),
+                                usage,
+                            )
 
                     await publish_chat_finished_event(request, user, metadata, title, content, response_output)
 
@@ -4053,6 +4128,13 @@ async def streaming_chat_response_handler(response, ctx):
                 if save_to_chat
                 else None
             )
+            if save_to_chat and message and not metadata.get('selected_model_id') and not message.get('error'):
+                await persist_model_context_usage_checkpoint(
+                    metadata['chat_id'],
+                    metadata['message_id'],
+                    message.get('model') or metadata.get('model_id') or form_data.get('model'),
+                    message.get('usage') or (message.get('info') or {}).get('usage'),
+                )
 
             tool_calls = []
 
@@ -4088,6 +4170,8 @@ async def streaming_chat_response_handler(response, ctx):
                     output = []
 
             usage = None
+            model_context_usage_failed = False
+            has_selected_model_id = bool(metadata.get('selected_model_id'))
             prior_output = []
             last_response_id = None
 
@@ -4105,6 +4189,8 @@ async def streaming_chat_response_handler(response, ctx):
                 return error if isinstance(error, (str, dict)) else str(error)
 
             async def emit_message_error(error_content):
+                nonlocal model_context_usage_failed
+                model_context_usage_failed = True
                 if save_to_chat:
                     await Chats.upsert_message_to_chat_by_id_and_message_id(
                         metadata['chat_id'],
@@ -4116,6 +4202,17 @@ async def streaming_chat_response_handler(response, ctx):
                         'type': 'chat:message:error',
                         'data': {'error': {'content': error_content}},
                     }
+                )
+
+            async def persist_completed_model_context_usage_checkpoint(completed_usage):
+                if not save_to_chat or has_selected_model_id:
+                    return
+
+                await persist_model_context_usage_checkpoint(
+                    metadata['chat_id'],
+                    metadata['message_id'],
+                    (message or {}).get('model') or metadata.get('model_id') or form_data.get('model'),
+                    completed_usage,
                 )
 
             reasoning_tags_param = metadata.get('params', {}).get('reasoning_tags')
@@ -4169,6 +4266,8 @@ async def streaming_chat_response_handler(response, ctx):
 
                 async def stream_body_handler(response, form_data):
                     nonlocal content_parts
+                    nonlocal has_selected_model_id
+                    nonlocal model_context_usage_failed
                     nonlocal usage
                     nonlocal output
                     nonlocal prior_output
@@ -4234,6 +4333,7 @@ async def streaming_chat_response_handler(response, ctx):
                                 raw_obj = JSONCodec.loads(data)
                                 raw_error = raw_obj.get('error') if isinstance(raw_obj, dict) else None
                                 if raw_error:
+                                    model_context_usage_failed = True
                                     if save_to_chat:
                                         try:
                                             await Chats.upsert_message_to_chat_by_id_and_message_id(
@@ -4272,6 +4372,7 @@ async def streaming_chat_response_handler(response, ctx):
 
                                 if 'selected_model_id' in data:
                                     model_id = data['selected_model_id']
+                                    has_selected_model_id = True
                                     if save_to_chat:
                                         await Chats.upsert_message_to_chat_by_id_and_message_id(
                                             metadata['chat_id'],
@@ -4292,6 +4393,8 @@ async def streaming_chat_response_handler(response, ctx):
                                     response_event_type = data.get('type', '')
                                     response_event_is_delta = response_event_type.endswith('.delta')
                                     output, response_metadata = handle_responses_streaming_event(data, output)
+                                    if response_event_type == 'response.failed':
+                                        model_context_usage_failed = True
 
                                     if not response_event_is_delta:
                                         await flush_pending_delta_data()
@@ -4343,6 +4446,8 @@ async def streaming_chat_response_handler(response, ctx):
                                     # calls. The outer middleware manages the
                                     # actual completion signal.
                                     if response_metadata:
+                                        if response_metadata.get('error'):
+                                            model_context_usage_failed = True
                                         if ENABLE_RESPONSES_API_STATEFUL:
                                             response_id = response_metadata.pop('response_id', None)
                                             if response_id:
@@ -4392,6 +4497,7 @@ async def streaming_chat_response_handler(response, ctx):
                                     if not choices:
                                         error = data.get('error', {})
                                         if error:
+                                            model_context_usage_failed = True
                                             log.error('Provider returned error (streaming): %s', error)
                                             if save_to_chat:
                                                 try:
@@ -5511,6 +5617,7 @@ async def streaming_chat_response_handler(response, ctx):
                 }
 
                 if save_to_chat:
+                    successful_message_update = {'error': None} if not model_context_usage_failed else {}
                     if not ENABLE_REALTIME_CHAT_SAVE:
                         # Save message in the database
                         await Chats.upsert_message_to_chat_by_id_and_message_id(
@@ -5519,6 +5626,7 @@ async def streaming_chat_response_handler(response, ctx):
                             {
                                 'done': True,
                                 'output': output,
+                                **successful_message_update,
                                 **({'usage': usage} if usage else {}),
                             },
                         )
@@ -5526,14 +5634,17 @@ async def streaming_chat_response_handler(response, ctx):
                         await Chats.upsert_message_to_chat_by_id_and_message_id(
                             metadata['chat_id'],
                             metadata['message_id'],
-                            {'done': True, 'usage': usage},
+                            {'done': True, 'usage': usage, **successful_message_update},
                         )
                     else:
                         await Chats.upsert_message_to_chat_by_id_and_message_id(
                             metadata['chat_id'],
                             metadata['message_id'],
-                            {'done': True},
+                            {'done': True, **successful_message_update},
                         )
+
+                if not model_context_usage_failed:
+                    await persist_completed_model_context_usage_checkpoint(usage)
 
                 await publish_chat_finished_event(request, user, metadata, title, ''.join(content_parts), output)
 
