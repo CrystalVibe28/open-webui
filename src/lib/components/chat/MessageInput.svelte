@@ -64,6 +64,7 @@
 	import { WEBUI_BASE_URL, WEBUI_API_BASE_URL, PASTED_TEXT_CHARACTER_LIMIT } from '$lib/constants';
 	import { initiateOAuthRedirect } from '$lib/apis/configs';
 	import { matchKeybinding, Shortcut } from '$lib/shortcuts';
+	import { formatCompactTokenCount, type ModelContextUsage } from '$lib/utils/modelContextUsage';
 
 	import { createNoteHandler } from '../notes/utils';
 	import { getSuggestionRenderer } from '../common/RichTextInput/suggestions';
@@ -121,6 +122,7 @@
 	export let forkHandler: Function = () => {};
 	export let chatId = '';
 	export let contextUsage = null;
+	export let modelContextUsage: ModelContextUsage | null = null;
 	export let contextCompactionEnabled = false;
 
 	export let autoScroll = false;
@@ -491,6 +493,55 @@
 			: `${contextTokens} ${$i18n.t('tokens')}`
 		: $i18n.t('unknown');
 	$: contextBarPercent = contextHasThreshold ? Math.min(contextPercent, 100) : 0;
+
+	const modelContextTooltipId = `model-context-usage-${uuidv4()}`;
+	$: modelContextModel =
+		selectedModelIds.length === 1
+			? $models.find((model) => model.id === selectedModelIds[0])
+			: null;
+	$: modelContextWindow = modelContextModel?.info?.meta?.context_window;
+	const isArenaModel = (model: { owned_by?: string; arena?: boolean }) =>
+		model.owned_by === 'arena' || model.arena === true;
+	const hasUsageCapability = (capabilities: unknown) =>
+		typeof capabilities === 'object' &&
+		capabilities !== null &&
+		'usage' in capabilities &&
+		capabilities.usage === true;
+	$: showModelContextUsage = Boolean(
+		history?.currentId &&
+		modelContextModel &&
+		!isArenaModel(modelContextModel) &&
+		hasUsageCapability(modelContextModel.info?.meta?.capabilities) &&
+		modelContextUsage?.modelId === modelContextModel.id &&
+		Number.isSafeInteger(modelContextUsage?.inputTokens) &&
+		(modelContextUsage?.inputTokens ?? 0) > 0 &&
+		Number.isSafeInteger(modelContextWindow) &&
+		(modelContextWindow ?? 0) > 0
+	);
+	$: modelContextUsedPercent = showModelContextUsage
+		? Math.max(
+				0,
+				Math.round(((modelContextUsage?.inputTokens ?? 0) / (modelContextWindow ?? 1)) * 100)
+			)
+		: 0;
+	$: modelContextRemainingPercent = Math.max(0, 100 - modelContextUsedPercent);
+	$: modelContextCirclePercent = Math.min(100, modelContextUsedPercent);
+	$: modelContextCircleOffset = 50.27 * (1 - modelContextCirclePercent / 100);
+	$: modelContextInputTokens = showModelContextUsage
+		? formatCompactTokenCount(modelContextUsage?.inputTokens ?? 0)
+		: '0';
+	$: modelContextWindowTokens = showModelContextUsage
+		? formatCompactTokenCount(modelContextWindow ?? 0)
+		: '0';
+	$: modelContextPercentText = $i18n.t('Used {{usedPercent}}% ({{remainingPercent}}% remaining)', {
+		usedPercent: modelContextUsedPercent,
+		remainingPercent: modelContextRemainingPercent
+	});
+	$: modelContextTokensText = $i18n.t('Used {{inputTokens}} / {{contextWindow}} tokens', {
+		inputTokens: modelContextInputTokens,
+		contextWindow: modelContextWindowTokens
+	});
+	$: modelContextAriaText = `${$i18n.t('Context Window:')} ${modelContextPercentText}. ${modelContextTokensText}.`;
 
 	const getCommand = () => {
 		const chatInput = document.getElementById('chat-input');
@@ -2236,6 +2287,63 @@
 								</div>
 
 								<div class="self-end flex space-x-1 mr-1 shrink-0 gap-[0.5px]">
+									{#if showModelContextUsage}
+										<Tooltip
+											elementId={modelContextTooltipId}
+											placement="top"
+											className="flex shrink-0"
+											tippyOptions={{ trigger: 'mouseenter focusin' }}
+										>
+											<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+											<span
+												class="app-icon-muted flex size-[1.875rem] shrink-0 cursor-default items-center justify-center rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-600 dark:focus-visible:outline-gray-400"
+												role="meter"
+												tabindex="0"
+												aria-valuemin="0"
+												aria-valuemax="100"
+												aria-valuenow={modelContextCirclePercent}
+												aria-label={$i18n.t('Context Window')}
+												aria-valuetext={modelContextAriaText}
+											>
+												<svg class="size-3.5 -rotate-90" viewBox="0 0 20 20" aria-hidden="true">
+													<circle
+														cx="10"
+														cy="10"
+														r="8"
+														fill="none"
+														stroke="currentColor"
+														stroke-width="2"
+														class="opacity-20"
+													/>
+													<circle
+														cx="10"
+														cy="10"
+														r="8"
+														fill="none"
+														stroke="currentColor"
+														stroke-width="2"
+														stroke-linecap="round"
+														stroke-dasharray="50.27"
+														style={`stroke-dashoffset: ${modelContextCircleOffset};`}
+													/>
+												</svg>
+											</span>
+
+											<div
+												slot="tooltip"
+												id={modelContextTooltipId}
+												dir="auto"
+												class="text-center text-xs leading-4 tabular-nums"
+											>
+												<div class="font-medium">{$i18n.t('Context Window:')}</div>
+												<div class="text-gray-100">{modelContextPercentText}</div>
+												<div class="text-gray-100" dir="auto">
+													{modelContextTokensText}
+												</div>
+											</div>
+										</Tooltip>
+									{/if}
+
 									<div class="flex min-w-0 max-w-[10rem] items-center sm:max-w-[13rem]">
 										<ModelSelector
 											bind:selectedModels

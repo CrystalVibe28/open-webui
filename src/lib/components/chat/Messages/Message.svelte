@@ -23,6 +23,7 @@
 
 	export let setInputText: Function = () => {};
 	export let gotoMessage;
+	export let onBranchChange: Function = () => {};
 	export let showPreviousMessage;
 	export let showNextMessage;
 	export let updateChat;
@@ -122,6 +123,7 @@
 					{selectedModels}
 					isLastMessage={messageId === history?.currentId}
 					{setInputText}
+					{onBranchChange}
 					{updateChat}
 					{editMessage}
 					{saveMessage}
