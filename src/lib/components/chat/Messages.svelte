@@ -38,6 +38,7 @@
 
 	export let chatActionHandler: Function;
 	export let showMessage: Function = () => {};
+	export let onBranchChange: Function = () => {};
 	export let submitMessage: Function = () => {};
 	export let addMessages: Function = () => {};
 	export let forkHandler: Function | null = null;
@@ -216,6 +217,7 @@
 
 			history.currentId = messageId;
 		}
+		onBranchChange();
 
 		await tick();
 
@@ -266,6 +268,7 @@
 				history.currentId = messageId;
 			}
 		}
+		onBranchChange();
 
 		await tick();
 
@@ -319,6 +322,7 @@
 				history.currentId = messageId;
 			}
 		}
+		onBranchChange();
 
 		await tick();
 
@@ -376,6 +380,7 @@
 
 				history.messages[userMessageId] = userMessage;
 				history.currentId = userMessageId;
+				onBranchChange();
 
 				await tick();
 				await sendMessage(history, userMessageId);
@@ -392,8 +397,20 @@
 				const message = history.messages[messageId];
 				const parentId = message.parentId;
 
+				const { usage: _usage, info, meta, ...messageWithoutUsage } = message;
+				const { model_context_usage: _modelContextUsage, ...metaWithoutContextUsage } = meta ?? {};
 				const responseMessage = {
-					...message,
+					...messageWithoutUsage,
+					...(info
+						? {
+								info: {
+									...info,
+									usage: undefined,
+									modelContextUsage: undefined
+								}
+							}
+						: {}),
+					...(meta ? { meta: metaWithoutContextUsage } : {}),
 					id: responseMessageId,
 					parentId: parentId,
 					childrenIds: [],
@@ -405,6 +422,7 @@
 
 				history.messages[responseMessageId] = responseMessage;
 				history.currentId = responseMessageId;
+				onBranchChange();
 
 				// Append messageId to childrenIds of parent message
 				if (parentId !== null) {
@@ -483,6 +501,7 @@
 			nextChildrenIds = history.messages[nextMessageId]?.childrenIds ?? [];
 		}
 		history.currentId = nextMessageId;
+		onBranchChange();
 		history = history;
 
 		if (!$temporaryChatEnabled) {
@@ -542,6 +561,7 @@
 								{user}
 								{setInputText}
 								{gotoMessage}
+								{onBranchChange}
 								{showPreviousMessage}
 								{showNextMessage}
 								{updateChat}
