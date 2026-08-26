@@ -69,11 +69,25 @@ class ModelMeta(BaseModel):
 
     profile_image_url: str | None = None
     description: str | None = Field(default=None, description='User-facing description of the model.')
-    context_window: int | None = Field(default=None, gt=0, strict=True)
+    context_window: int | None = Field(default=None, ge=0, strict=True)
     capabilities: dict | None = None
     knowledge: list[Any] | None = None
 
     model_config = ConfigDict(extra='allow')
+
+    @field_validator('context_window', mode='after')
+    @classmethod
+    def coerce_zero_context_window(cls, v: int | None) -> int | None:
+        """Treat context_window=0 as unset (None).
+
+        Exported model configs from Open WebUI or LiteLLM may contain
+        ``context_window: 0`` which semantically means "not configured".
+        Rather than rejecting the import with a validation error we
+        normalise it to ``None``.
+        """
+        if v is not None and v == 0:
+            return None
+        return v
 
     @field_validator('profile_image_url', mode='before')
     @classmethod
