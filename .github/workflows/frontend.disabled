@@ -1,3 +1,4 @@
+# Disabled: only the container image workflow is active.
 # ─────────────────────────────────────────────────────────────────────────────
 # Frontend CI — Lint, format check, build, and unit tests
 # Runs on pushes and PRs to main/dev, skipping backend-only changes
