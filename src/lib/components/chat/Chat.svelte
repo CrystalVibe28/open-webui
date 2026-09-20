@@ -71,6 +71,7 @@
 		countToolUsageItems,
 		findLatestModelContextUsage,
 		getLatestInputTokens,
+		getLatestOutputTokens,
 		type ModelContextUsage
 	} from '$lib/utils/modelContextUsage';
 	import { getOutputText } from './Messages/structuredOutput';
@@ -393,6 +394,7 @@
 		baselineToolCount: number;
 		hasToolActivity: boolean;
 		inputTokens?: number;
+		outputTokens?: number;
 		hadUsage: boolean;
 		previousUsage?: Record<string, unknown>;
 		hadInfoUsage: boolean;
@@ -463,13 +465,15 @@
 		const modelId = message.selectedModelId ?? message.model;
 		const baselineToolCount = countToolUsageItems(message.output);
 		const baselineInputTokens = getLatestInputTokens(message?.usage ?? message?.info?.usage);
+		const baselineOutputTokens = getLatestOutputTokens(message?.usage ?? message?.info?.usage);
 		const storedCheckpoint = message?.meta?.model_context_usage;
 		const existingCheckpoint =
 			message?.info?.modelContextUsage ??
 			(storedCheckpoint
 				? {
 						modelId: storedCheckpoint.model_id,
-						inputTokens: storedCheckpoint.input_tokens
+						inputTokens: storedCheckpoint.input_tokens,
+						outputTokens: storedCheckpoint.output_tokens
 					}
 				: null);
 		const hasValidCheckpoint =
@@ -483,14 +487,22 @@
 			!message.error &&
 			baselineInputTokens
 		) {
-			const checkpoint = { modelId, inputTokens: baselineInputTokens };
+			const checkpoint = {
+				modelId,
+				inputTokens: baselineInputTokens,
+				outputTokens: baselineOutputTokens
+			};
 			message.info = {
 				...(message.info ?? {}),
 				modelContextUsage: checkpoint
 			};
 			message.meta = {
 				...(message.meta ?? {}),
-				model_context_usage: { model_id: modelId, input_tokens: baselineInputTokens }
+				model_context_usage: {
+					model_id: modelId,
+					input_tokens: baselineInputTokens,
+					output_tokens: baselineOutputTokens
+				}
 			};
 		}
 		pendingModelContextUsage.set(message.id, {
@@ -522,7 +534,8 @@
 			previewModelContextUsage = {
 				messageId: message.id,
 				modelId: pending.modelId,
-				inputTokens: pending.inputTokens
+				inputTokens: pending.inputTokens,
+				outputTokens: pending.outputTokens
 			};
 		}
 	};
@@ -533,6 +546,7 @@
 		if (!pending || !inputTokens) return;
 
 		pending.inputTokens = inputTokens;
+		pending.outputTokens = getLatestOutputTokens(usage);
 		updateModelContextUsagePreview(message);
 	};
 
@@ -548,11 +562,16 @@
 		const inputTokens = getLatestInputTokens(message?.usage ?? message?.info?.usage);
 		if (!modelId || !inputTokens) return;
 
-		const checkpoint = { modelId, inputTokens };
+		const outputTokens = getLatestOutputTokens(message?.usage ?? message?.info?.usage);
+		const checkpoint = { modelId, inputTokens, outputTokens };
 		message.info = { ...(message.info ?? {}), modelContextUsage: checkpoint };
 		message.meta = {
 			...(message.meta ?? {}),
-			model_context_usage: { model_id: modelId, input_tokens: inputTokens }
+			model_context_usage: {
+				model_id: modelId,
+				input_tokens: inputTokens,
+				output_tokens: outputTokens
+			}
 		};
 
 		if (modelId === getEffectiveSingleModelId() && isMessageOnActiveBranch(message.id)) {

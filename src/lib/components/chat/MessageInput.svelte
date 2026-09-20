@@ -64,7 +64,11 @@
 	import { WEBUI_BASE_URL, WEBUI_API_BASE_URL, PASTED_TEXT_CHARACTER_LIMIT } from '$lib/constants';
 	import { initiateOAuthRedirect } from '$lib/apis/configs';
 	import { matchKeybinding, Shortcut } from '$lib/shortcuts';
-	import { formatCompactTokenCount, type ModelContextUsage } from '$lib/utils/modelContextUsage';
+	import {
+		formatCompactTokenCount,
+		getModelContextUsedTokens,
+		type ModelContextUsage
+	} from '$lib/utils/modelContextUsage';
 
 	import { createNoteHandler } from '../notes/utils';
 	import { getSuggestionRenderer } from '../common/RichTextInput/suggestions';
@@ -518,17 +522,15 @@
 		Number.isSafeInteger(modelContextWindow) &&
 		(modelContextWindow ?? 0) > 0
 	);
+	$: modelContextUsedTokens = getModelContextUsedTokens(modelContextUsage);
 	$: modelContextUsedPercent = showModelContextUsage
-		? Math.max(
-				0,
-				Math.round(((modelContextUsage?.inputTokens ?? 0) / (modelContextWindow ?? 1)) * 100)
-			)
+		? Math.max(0, Math.round((modelContextUsedTokens / (modelContextWindow ?? 1)) * 100))
 		: 0;
 	$: modelContextRemainingPercent = Math.max(0, 100 - modelContextUsedPercent);
 	$: modelContextCirclePercent = Math.min(100, modelContextUsedPercent);
 	$: modelContextCircleOffset = 50.27 * (1 - modelContextCirclePercent / 100);
-	$: modelContextInputTokens = showModelContextUsage
-		? formatCompactTokenCount(modelContextUsage?.inputTokens ?? 0)
+	$: modelContextTokens = showModelContextUsage
+		? formatCompactTokenCount(modelContextUsedTokens)
 		: '0';
 	$: modelContextWindowTokens = showModelContextUsage
 		? formatCompactTokenCount(modelContextWindow ?? 0)
@@ -538,7 +540,7 @@
 		remainingPercent: modelContextRemainingPercent
 	});
 	$: modelContextTokensText = $i18n.t('Used {{inputTokens}} / {{contextWindow}} tokens', {
-		inputTokens: modelContextInputTokens,
+		inputTokens: modelContextTokens,
 		contextWindow: modelContextWindowTokens
 	});
 	$: modelContextAriaText = `${$i18n.t('Context Window:')} ${modelContextPercentText}. ${modelContextTokensText}.`;
