@@ -885,7 +885,7 @@
 		const element = document.getElementById('messages-container');
 		element.scrollTo({
 			top: element.scrollHeight,
-			behavior: 'smooth'
+			behavior: 'auto'
 		});
 	};
 
