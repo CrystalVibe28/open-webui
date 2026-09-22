@@ -20,7 +20,7 @@ function declarations(file: string, names: string[]) {
 const responseHandlers = declarations('./Chat.svelte', [
 	'responseCompletionEventHandler',
 	'shouldAutoScrollResponse',
-	'scheduleResponseScrollToBottom',
+	'autoScrollToBottom',
 	'scrollRAF'
 ]);
 
@@ -33,17 +33,25 @@ describe('response auto-scroll', () => {
 		const scrollToBottom = vi.fn();
 		const frames: Array<() => Promise<void>> = [];
 		const message = { id: 'reply', content: '', output: [] };
-		const handle = runInNewContext(`${responseHandlers}\nresponseCompletionEventHandler`, {
-			autoScroll,
-			$settings: { scrollOnResponseGeneration: enabled },
-			history: { messages: {} },
-			navigator: {},
-			applyResponseStreamEvent,
-			getOutputText,
-			dispatchCallOverlayAudio: vi.fn(),
-			scrollToBottom,
-			requestAnimationFrame: (callback: () => Promise<void>) => frames.push(callback)
-		});
+		const handlers = runInNewContext(
+			`${responseHandlers}\n({ responseCompletionEventHandler, autoScrollToBottom })`,
+			{
+				autoScroll,
+				$settings: { scrollOnResponseGeneration: enabled },
+				history: { messages: {} },
+				navigator: {},
+				applyResponseStreamEvent,
+				getOutputText,
+				dispatchCallOverlayAudio: vi.fn(),
+				scrollToBottom,
+				requestAnimationFrame: (callback: () => Promise<void>) => frames.push(callback)
+			}
+		);
+		const handle = (data: any, targetMessage: typeof message) => {
+			handlers.responseCompletionEventHandler(data, targetMessage);
+			// The event dispatcher owns scheduling after either completion handler runs.
+			handlers.autoScrollToBottom();
+		};
 
 		// Multiple chunks in one frame should update content and only schedule one scroll.
 		handle({ type: 'response.output_text.delta', delta: 'Hello' }, message);
