@@ -2957,6 +2957,7 @@
 
 		history.messages[message.id] = message;
 		history = history;
+		scheduleResponseScrollToBottom();
 	};
 
 	const chatCompletionEventHandler = async (data, message, chatId) => {
