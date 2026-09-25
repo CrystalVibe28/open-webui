@@ -50,6 +50,8 @@ from open_webui.utils.auth import get_verified_user_by_token
 from open_webui.utils.chat_id import is_saved_chat_id
 from open_webui.utils.json_codec import SOCKETIO_JSON, JSONCodec, dumps_bytes
 from open_webui.utils.misc import get_output_text
+from open_webui.utils.user_visibility import UserVisibility
+from open_webui.utils.user_visibility_payload import sanitize_user_payload
 from open_webui.utils.redis import (
     build_sentinel_url,
     get_redis_connection,
@@ -86,6 +88,186 @@ class JSONOnlyPacket(Packet):
         return super().reconstruct_binary(data, [list(attachment) for attachment in attachments])
 
 
+class PrivacyAsyncServer(socketio.AsyncServer):
+    """Sanitize identity-bearing realtime payloads for each current recipient."""
+
+    async def emit(
+        self,
+        event,
+        data=None,
+        to=None,
+        room=None,
+        skip_sid=None,
+        namespace=None,
+        callback=None,
+        ignore_queue=False,
+        **kwargs,
+    ):
+        # This exact invalidation signal contains no identities. New members
+        # receive it in their user room before joining the new channel room.
+        channel_created = event == 'events:channel' and data == {'data': {'type': 'channel:created'}}
+        if channel_created or (event not in {'events:channel', 'events:note'} and not (
+            isinstance(event, str) and event.startswith('ydoc:')
+        )):
+            return await super().emit(
+                event, data, to=to, room=room, skip_sid=skip_sid, namespace=namespace,
+                callback=callback, ignore_queue=ignore_queue, **kwargs
+            )
+
+        if isinstance(to, (list, tuple, set)) or isinstance(room, (list, tuple, set)):
+            return
+        target = to or room
+        if target is None and event == 'events:channel' and isinstance(data, dict) and data.get('channel_id'):
+            target = f"channel:{data['channel_id']}"
+        elif target is None and event == 'events:note' and isinstance(data, dict) and data.get('id'):
+            target = f"note:{data['id']}"
+        recipients = await self._privacy_recipients(event, data, str(target) if target else None)
+        sent_sessions = set()
+        for sid, user, visibility in recipients:
+            skipped = skip_sid if isinstance(skip_sid, (list, tuple, set)) else [skip_sid]
+            if sid in skipped or sid in sent_sessions:
+                continue
+            sent_sessions.add(sid)
+
+            # Yjs document updates carry opaque content bytes. Keep the update intact;
+            # only sanitize its structured actor fields. Awareness carries presence data,
+            # so hide the complete update when its author is outside the viewer's scope.
+            if event == 'ydoc:awareness:update':
+                actor_id = data.get('user_id') if isinstance(data, dict) else None
+                if actor_id and not visibility.can_see(actor_id):
+                    continue
+
+            clean = sanitize_user_payload(data, visibility)
+            clean = self._sanitize_session_ids(clean, visibility)
+            if event == 'ydoc:document:state' and isinstance(clean, dict) and isinstance(clean.get('sessions'), list):
+                clean['sessions'] = [sid for sid in clean['sessions'] if self._session_is_visible(sid, visibility)]
+            await super().emit(
+                event,
+                clean,
+                to=sid,
+                skip_sid=skip_sid,
+                namespace=namespace,
+                callback=callback,
+                ignore_queue=ignore_queue,
+                **kwargs,
+            )
+
+    @staticmethod
+    def _session_is_visible(session_id, visibility):
+        session = SESSION_POOL.get(session_id)
+        return bool(session and visibility.can_see(session.get('id', '')))
+
+    @classmethod
+    def _sanitize_session_ids(cls, data, visibility):
+        if visibility.user_ids is None:
+            return data
+
+        def clean(value):
+            if isinstance(value, list):
+                return [item for raw in value if (item := clean(raw)) is not None]
+            if not isinstance(value, dict):
+                return value
+            result = {}
+            for key, item in value.items():
+                if key in {'socket_id', 'session_id', 'sid'}:
+                    result[key] = item if cls._session_is_visible(item, visibility) else None
+                elif key in {'sessions', 'session_ids'} and isinstance(item, list):
+                    result[key] = [sid for sid in item if cls._session_is_visible(sid, visibility)]
+                else:
+                    result[key] = clean(item)
+            return result
+
+        return clean(data)
+
+    async def _privacy_session_ids(self, event, data, target):
+        if target is None:
+            return []
+        if event.startswith('ydoc:'):
+            document_id = data.get('document_id') if isinstance(data, dict) else None
+            if document_id:
+                document_id = normalize_document_id(document_id)
+            elif target.startswith('doc_'):
+                document_id = normalize_document_id(target.removeprefix('doc_'))
+            else:
+                return []
+            session_ids = await YDOC_MANAGER.get_users(document_id)
+            return [sid for sid in session_ids if target.startswith('doc_') or target == sid]
+
+        resource_type = 'channel' if event == 'events:channel' else 'note'
+        field = 'channel_ids' if resource_type == 'channel' else 'note_ids'
+        data_id = data.get('channel_id' if resource_type == 'channel' else 'id') if isinstance(data, dict) else None
+        prefix = f'{resource_type}:'
+        resource_id = data_id or (target.removeprefix(prefix) if target.startswith(prefix) else None)
+        if not resource_id:
+            return []
+        resource_room = f'{prefix}{resource_id}'
+        is_sid_target = target in SESSION_POOL
+        if target != resource_room and not is_sid_target:
+            return []
+
+        session_ids = set(get_room_sid_map(self.manager, '/', resource_room) or ())
+        session_ids.update(
+            sid for sid, entry in SESSION_POOL.items()
+            if entry and resource_id in entry.get(field, [])
+        )
+        if is_sid_target:
+            session_ids.intersection_update({target})
+        return list(session_ids)
+
+    async def _privacy_policy(self, entry, channel, note):
+        try:
+            user = await Users.get_user_by_id(entry['id'])
+            if not user or user.role not in {'user', 'admin'}:
+                return None
+            visibility = await UserVisibility.load(user)
+            if channel:
+                visibility = await visibility.for_channel(channel)
+            if note and user.role != 'admin' and user.id != note.user_id and not await AccessGrants.has_access(
+                user_id=user.id, resource_type='note', resource_id=note.id, permission='read'
+            ):
+                return None
+        except Exception:
+            return None
+        return user, visibility
+
+    async def _privacy_recipients(self, event, data, target):
+        """Resolve target-room sessions and refresh their role/group policy."""
+        session_ids = await self._privacy_session_ids(event, data, target)
+        channel = None
+        channel_id = data.get('channel_id') if isinstance(data, dict) else None
+        if not channel_id and event == 'events:channel' and target and target.startswith('channel:'):
+            channel_id = target.removeprefix('channel:')
+        note_id = None
+        document_id = data.get('document_id') if isinstance(data, dict) else None
+        if event == 'events:channel' and channel_id:
+            channel = await Channels.get_channel_by_id(channel_id)
+            if not channel:
+                return []
+        elif event == 'events:note':
+            note_id = (data.get('id') if isinstance(data, dict) else None) or target.removeprefix('note:')
+        elif event.startswith('ydoc:') and document_id:
+            normalized = normalize_document_id(document_id)
+            if normalized.startswith('note:'):
+                note_id = normalized.removeprefix('note:')
+        note = await Notes.get_note_by_id(note_id) if note_id else None
+        if note_id and not note:
+            return []
+
+        recipients = []
+        checked = {}
+        for sid in session_ids:
+            entry = SESSION_POOL.get(sid)
+            if not entry or not entry.get('id'):
+                continue
+            user_id = entry['id']
+            if user_id not in checked:
+                checked[user_id] = await self._privacy_policy(entry, channel, note)
+            if checked[user_id]:
+                user, visibility = checked[user_id]
+                recipients.append((sid, user, visibility))
+        return recipients
+
+
 if WEBSOCKET_MANAGER == 'redis':
     sentinel_hosts = WEBSOCKET_SENTINEL_HOSTS or ''
     ws_redis_url = (
@@ -94,7 +276,7 @@ if WEBSOCKET_MANAGER == 'redis':
         else WEBSOCKET_REDIS_URL
     )
     redis_manager = socketio.AsyncRedisManager(ws_redis_url, redis_options=WEBSOCKET_REDIS_OPTIONS, json=SOCKETIO_JSON)
-    sio = socketio.AsyncServer(
+    sio = PrivacyAsyncServer(
         cors_allowed_origins=SOCKETIO_CORS_ORIGINS,
         async_mode='asgi',
         json=SOCKETIO_JSON,
@@ -109,7 +291,7 @@ if WEBSOCKET_MANAGER == 'redis':
         engineio_logger=WEBSOCKET_SERVER_ENGINEIO_LOGGING,
     )
 else:
-    sio = socketio.AsyncServer(
+    sio = PrivacyAsyncServer(
         cors_allowed_origins=SOCKETIO_CORS_ORIGINS,
         async_mode='asgi',
         json=SOCKETIO_JSON,
@@ -353,6 +535,13 @@ async def get_user_ids_from_room(room) -> set[str]:
     return {user['id'] for user in users if user}
 
 
+def remember_session_resource(sid: str, field: str, resource_id: str) -> None:
+    """Index this authenticated session's room subscriptions in SESSION_POOL."""
+    session = SESSION_POOL.get(sid)
+    if session and resource_id not in session.get(field, []):
+        SESSION_POOL[sid] = {**session, field: [*session.get(field, []), resource_id]}
+
+
 async def emit_to_users(event: str, data: dict, user_ids: list[str]):
     """
     Send a message to specific users using their user:{id} rooms.
@@ -378,9 +567,11 @@ async def enter_room_for_users(room: str, user_ids: list[str]):
     """
     try:
         for user_id in user_ids:
-            session_ids = get_session_ids_from_room(f'user:{user_id}')
+            session_ids = get_session_ids_by_user_id(user_id)
             for sid in session_ids:
                 await sio.enter_room(sid, room)
+                if room.startswith('channel:'):
+                    remember_session_resource(sid, 'channel_ids', room.removeprefix('channel:'))
     except Exception as e:
         log.debug('Failed to make users %s join room %s: %s', user_ids, room, e)
 
@@ -440,7 +631,7 @@ async def connect(sid, environ, auth):
                 ),
                 'last_seen_at': int(time.time()),
             }
-            SESSION_POOL[sid] = socket_user
+            SESSION_POOL[sid] = {**(SESSION_POOL.get(sid) or {}), **socket_user}
             await sio.save_session(sid, {'user': socket_user})
             await sio.enter_room(sid, f'user:{user.id}')
 
@@ -472,7 +663,7 @@ async def user_join(sid, data):
         'last_seen_at': int(time.time()),
     }
 
-    SESSION_POOL[sid] = socket_user
+    SESSION_POOL[sid] = {**(SESSION_POOL.get(sid) or {}), **socket_user}
     await sio.save_session(sid, {'user': socket_user})
     await sio.enter_room(sid, f'user:{user.id}')
 
@@ -482,6 +673,7 @@ async def user_join(sid, data):
         log.debug('channels=%r', channels)
         for channel in channels:
             await sio.enter_room(sid, f'channel:{channel.id}')
+            remember_session_resource(sid, 'channel_ids', channel.id)
 
     return {'id': user.id, 'name': user.name}
 
@@ -490,7 +682,7 @@ async def user_join(sid, data):
 async def heartbeat(sid, data):
     user = await get_socket_session_user(sid)
     if user:
-        SESSION_POOL[sid] = {**user, 'last_seen_at': int(time.time())}
+        SESSION_POOL[sid] = {**(SESSION_POOL.get(sid) or {}), **user, 'last_seen_at': int(time.time())}
         await Users.update_last_active_by_id(user['id'])
 
 
@@ -514,6 +706,7 @@ async def join_channel(sid, data):
         log.debug('channels=%r', channels)
         for channel in channels:
             await sio.enter_room(sid, f'channel:{channel.id}')
+            remember_session_resource(sid, 'channel_ids', channel.id)
 
 
 @sio.on('join-note')
@@ -550,6 +743,7 @@ async def join_note(sid, data):
 
     log.debug('Joining note %s for user %s', note.id, user.id)
     await sio.enter_room(sid, f'note:{note.id}')
+    remember_session_resource(sid, 'note_ids', note.id)
 
 
 @sio.on('events:channel')
@@ -682,8 +876,8 @@ async def ydoc_document_join(sid, data):
                 log.error(f'User {user.get("id")} does not have access to note {note_id}')
                 return
 
-        user_id = data.get('user_id', sid)
-        user_name = data.get('user_name', 'Anonymous')
+        user_id = user['id']
+        user_name = user['name']
         user_color = data.get('user_color', '#000000')
 
         log.info('User %s joining document %s', user_id, document_id)
@@ -842,7 +1036,7 @@ async def yjs_document_update(sid, data):
         update = data.get('update')  # List of bytes from frontend
 
         if update:
-            user_id = data.get('user_id', sid)
+            user_id = user['id']
 
             await YDOC_MANAGER.append_to_updates(
                 document_id=document_id,

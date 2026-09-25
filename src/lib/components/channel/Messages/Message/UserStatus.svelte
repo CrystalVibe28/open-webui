@@ -15,6 +15,7 @@
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 
 	export let user = null;
+	export let channelId: string | null = null;
 
 	const directMessageHandler = async () => {
 		if (!user) {
@@ -37,7 +38,7 @@
 		<div class=" flex gap-3.5 w-full px-3 items-center">
 			<div class=" items-center flex shrink-0">
 				<img
-					src={`${WEBUI_API_BASE_URL}/users/${user?.id}/profile/image`}
+					src={`${WEBUI_API_BASE_URL}/users/${user?.id}/profile/image${channelId ? `?channel_id=${encodeURIComponent(channelId)}` : ''}`}
 					class=" size-14 object-cover rounded-xl"
 					alt="profile"
 				/>

@@ -28,7 +28,7 @@ from open_webui.models.groups import Groups
 from open_webui.models.memories import Memories
 from open_webui.models.messages import Message, Messages
 from open_webui.models.notes import Notes
-from open_webui.models.users import UserModel
+from open_webui.models.users import UserModel, Users
 from open_webui.retrieval.utils import filter_source_metadata, get_content_from_url
 from open_webui.retrieval.vector.async_client import ASYNC_VECTOR_DB_CLIENT
 from open_webui.routers.images import (
@@ -1838,6 +1838,13 @@ async def search_channel_messages(
 
     try:
         user_id = __user__.get('id')
+        from open_webui.utils.user_visibility import UserVisibility
+        from open_webui.utils.user_visibility_payload import sanitize_user_payload
+
+        viewer = await Users.get_user_by_id(user_id)
+        if not viewer:
+            return JSONCodec.dumps({'error': 'User not found'})
+        visibility = await UserVisibility.load(viewer)
 
         # Get all channels the user has access to
         user_channels = await Channels.get_channels_by_user_id(user_id)
@@ -1863,17 +1870,18 @@ async def search_channel_messages(
         results = []
         for msg in matching_messages:
             channel = channel_map.get(msg.channel_id)
+            channel_visibility = await visibility.for_channel(channel)
 
-            # Extract snippet around the match
-            content = msg.content or ''
+            # Sanitize before matching and truncating, so hidden mentions cannot
+            # independently surface a result or leak through a clipped token.
+            content = sanitize_user_payload(msg.content or '', channel_visibility)
             lower_query = query.lower()
             idx = content.lower().find(lower_query)
-            if idx != -1:
-                start = max(0, idx - 50)
-                end = min(len(content), idx + len(query) + 100)
-                snippet = ('...' if start > 0 else '') + content[start:end] + ('...' if end < len(content) else '')
-            else:
-                snippet = content[:150] + ('...' if len(content) > 150 else '')
+            if idx == -1:
+                continue
+            start = max(0, idx - 50)
+            end = min(len(content), idx + len(query) + 100)
+            snippet = ('...' if start > 0 else '') + content[start:end] + ('...' if end < len(content) else '')
 
             results.append(
                 {
@@ -1912,6 +1920,13 @@ async def view_channel_message(
 
     try:
         user_id = __user__.get('id')
+        from open_webui.utils.user_visibility import UserVisibility
+        from open_webui.utils.user_visibility_payload import sanitize_user_payload
+
+        viewer = await Users.get_user_by_id(user_id)
+        if not viewer:
+            return JSONCodec.dumps({'error': 'User not found'})
+        visibility = await UserVisibility.load(viewer)
 
         message = await Messages.get_message_by_id(message_id)
 
@@ -1948,7 +1963,9 @@ async def view_channel_message(
         if message.user:
             result['user_name'] = message.user.name
 
-        return JSONCodec.dumps(result, ensure_ascii=False)
+        return JSONCodec.dumps(
+            sanitize_user_payload(result, await visibility.for_channel(channel)), ensure_ascii=False
+        )
     except Exception as e:
         log.exception(f'view_channel_message error: {e}')
         return JSONCodec.dumps({'error': str(e)})
@@ -1973,6 +1990,13 @@ async def view_channel_thread(
 
     try:
         user_id = __user__.get('id')
+        from open_webui.utils.user_visibility import UserVisibility
+        from open_webui.utils.user_visibility_payload import sanitize_user_payload
+
+        viewer = await Users.get_user_by_id(user_id)
+        if not viewer:
+            return JSONCodec.dumps({'error': 'User not found'})
+        visibility = await UserVisibility.load(viewer)
 
         # Get the parent message
         parent_message = await Messages.get_message_by_id(parent_message_id)
@@ -2024,13 +2048,16 @@ async def view_channel_thread(
             )
 
         return JSONCodec.dumps(
-            {
-                'channel_id': parent_message.channel_id,
-                'channel_name': channel.name,
-                'thread_id': parent_message_id,
-                'message_count': len(messages),
-                'messages': messages,
-            },
+            sanitize_user_payload(
+                {
+                    'channel_id': parent_message.channel_id,
+                    'channel_name': channel.name,
+                    'thread_id': parent_message_id,
+                    'message_count': len(messages),
+                    'messages': messages,
+                },
+                await visibility.for_channel(channel),
+            ),
             ensure_ascii=False,
         )
     except Exception as e:

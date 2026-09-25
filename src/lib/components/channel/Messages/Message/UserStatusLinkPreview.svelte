@@ -8,6 +8,7 @@
 	import UserStatus from './UserStatus.svelte';
 
 	export let id: string | null = null;
+	export let channelId: string | null = null;
 	export let openPreview = false;
 
 	export let side = 'top';
@@ -18,22 +19,26 @@
 	let requestedUserId: string | null = null;
 
 	const loadUser = async (userId: string) => {
-		requestedUserId = userId;
+		const requestKey = `${channelId ?? ''}:${userId}`;
+		requestedUserId = requestKey;
+		user = null;
 
-		const loadedUser = await getUserInfoById(localStorage.token, userId).catch((error) => {
-			if (requestedUserId === userId) {
-				console.error('Error fetching user by ID:', error);
+		const loadedUser = await getUserInfoById(localStorage.token, userId, channelId).catch(
+			(error) => {
+				if (requestedUserId === requestKey) {
+					console.error('Error fetching user by ID:', error);
+				}
+
+				return null;
 			}
+		);
 
-			return null;
-		});
-
-		if (requestedUserId === userId) {
+		if (requestedUserId === requestKey) {
 			user = loadedUser;
 		}
 	};
 
-	$: if (openPreview && id && id !== requestedUserId) {
+	$: if (openPreview && id && `${channelId ?? ''}:${id}` !== requestedUserId) {
 		loadUser(id);
 	}
 </script>
@@ -46,7 +51,7 @@
 			{align}
 			{sideOffset}
 		>
-			<UserStatus {user} />
+			<UserStatus {user} {channelId} />
 		</LinkPreview.Content>
 	</LinkPreview.Portal>
 {/if}

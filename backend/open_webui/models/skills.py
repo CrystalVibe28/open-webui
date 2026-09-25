@@ -7,7 +7,7 @@ from open_webui.models.access_grants import AccessGrantModel, AccessGrants
 from open_webui.models.groups import Groups
 from open_webui.models.users import User, UserModel, UserResponse, Users
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import JSON, BigInteger, Boolean, Column, String, Text, delete, func, or_, select, update
+from sqlalchemy import JSON, BigInteger, Boolean, Column, String, Text, and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
@@ -232,13 +232,22 @@ class SkillsTable:
                 if filter:
                     query_key = filter.get('query')
                     if query_key:
+                        from open_webui.utils.user_visibility import UserVisibility
+
+                        viewer = await Users.get_user_by_id(user_id, db=db)
+                        visibility = await UserVisibility.load(viewer, db=db)
+                        owner_match = or_(
+                            User.name.ilike(f'%{query_key}%'),
+                            User.email.ilike(f'%{query_key}%'),
+                        )
+                        if viewer.role == 'user' and visibility.user_ids is not None:
+                            owner_match = and_(User.id.in_(visibility.user_ids), owner_match)
                         stmt = stmt.filter(
                             or_(
                                 Skill.name.ilike(f'%{query_key}%'),
                                 Skill.description.ilike(f'%{query_key}%'),
                                 Skill.id.ilike(f'%{query_key}%'),
-                                User.name.ilike(f'%{query_key}%'),
-                                User.email.ilike(f'%{query_key}%'),
+                                owner_match,
                             )
                         )
 

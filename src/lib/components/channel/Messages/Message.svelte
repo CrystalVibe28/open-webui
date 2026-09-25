@@ -312,7 +312,7 @@
 				</div>
 			{/if}
 
-			{#if message?.reply_to_message?.user}
+			{#if message?.reply_to_message}
 				<div class="relative text-xs mb-1">
 					<div
 						class="absolute h-3 w-7 left-[1.125rem] top-2 rounded-tl-lg border-t-[1.5px] border-l-[1.5px] border-gray-200 dark:border-gray-700 z-0"
@@ -345,12 +345,18 @@
 									e.currentTarget.src = '/favicon.png';
 								}}
 							/>
-						{:else}
+						{:else if message.reply_to_message.user?.id}
 							<img
 								src={message.reply_to_message.user?.role === 'webhook'
 									? `${WEBUI_API_BASE_URL}/channels/webhooks/${message.reply_to_message.user?.id}/profile/image`
-									: `${WEBUI_API_BASE_URL}/users/${message.reply_to_message.user?.id}/profile/image`}
+									: `${WEBUI_API_BASE_URL}/users/${message.reply_to_message.user?.id}/profile/image?channel_id=${encodeURIComponent(channel?.id ?? '')}`}
 								alt={message.reply_to_message.user?.name ?? $i18n.t('Unknown User')}
+								class="size-4 ml-0.5 rounded-full object-cover"
+							/>
+						{:else}
+							<img
+								src="/user.png"
+								alt={$i18n.t('Unknown User')}
 								class="size-4 ml-0.5 rounded-full object-cover"
 							/>
 						{/if}
@@ -365,6 +371,7 @@
 							<Markdown
 								id={`${renderedMessageId}-reply-to`}
 								content={message?.reply_to_message?.content}
+								channelId={channel?.id}
 								allowEmbeds={false}
 							/>
 						</div>
@@ -396,13 +403,15 @@
 								src={`${WEBUI_API_BASE_URL}/channels/webhooks/${message.user?.id}/profile/image`}
 								className={'size-8 ml-0.5'}
 							/>
-						{:else}
-							<ProfilePreview user={message.user}>
+						{:else if message.user?.id}
+							<ProfilePreview user={message.user} channelId={channel?.id}>
 								<ProfileImage
-									src={`${WEBUI_API_BASE_URL}/users/${message.user?.id}/profile/image`}
+									src={`${WEBUI_API_BASE_URL}/users/${message.user?.id}/profile/image?channel_id=${encodeURIComponent(channel?.id ?? '')}`}
 									className={'size-8 ml-0.5'}
 								/>
 							</ProfilePreview>
+						{:else}
+							<img src="/user.png" alt={$i18n.t('Unknown User')} class="size-8 ml-0.5 rounded-full" />
 						{/if}
 					{:else}
 						<!-- <div class="w-7 h-7 rounded-full bg-transparent" /> -->
@@ -426,7 +435,7 @@
 								{#if message?.meta?.model_id}
 									{message?.meta?.model_name ?? message?.meta?.model_id}
 								{:else}
-									{message?.user?.name}
+								{message?.user?.name ?? $i18n.t('Unknown User')}
 								{/if}
 							</div>
 
@@ -546,6 +555,7 @@
 									<Markdown
 										id={renderedMessageId}
 										content={message.content}
+										channelId={channel?.id}
 										paragraphTag="span"
 										allowEmbeds={false}
 									/>

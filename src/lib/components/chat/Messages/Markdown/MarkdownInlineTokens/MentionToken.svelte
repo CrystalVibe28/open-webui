@@ -3,6 +3,7 @@
 	import { LinkPreview } from 'bits-ui';
 
 	import { getContext } from 'svelte';
+	import { readable, type Readable } from 'svelte/store';
 
 	import { goto } from '$app/navigation';
 	import { channels, models } from '$lib/stores';
@@ -10,8 +11,10 @@
 	import UserStatusLinkPreview from '$lib/components/channel/Messages/Message/UserStatusLinkPreview.svelte';
 
 	const i18n = getContext('i18n');
+	const channelContext = getContext<Readable<string | null>>('channelId') ?? readable(null);
 
 	export let token: Token;
+	let openPreview = false;
 
 	let triggerChar = '';
 	let label = '';
@@ -81,7 +84,7 @@
 	};
 </script>
 
-<LinkPreview.Root openDelay={0} closeDelay={0}>
+<LinkPreview.Root openDelay={0} closeDelay={0} bind:open={openPreview}>
 	<LinkPreview.Trigger class=" cursor-pointer no-underline! font-normal! ">
 		<!-- svelte-ignore a11y-click-events-have-key-events -->
 		<!-- svelte-ignore a11y-no-static-element-interactions -->
@@ -117,6 +120,6 @@
 	</LinkPreview.Trigger>
 
 	{#if triggerChar === '@' && idType === 'U'}
-		<UserStatusLinkPreview {id} />
+		<UserStatusLinkPreview {id} channelId={$channelContext} {openPreview} />
 	{/if}
 </LinkPreview.Root>

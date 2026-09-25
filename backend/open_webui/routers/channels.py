@@ -45,6 +45,8 @@ from open_webui.socket.main import (
 from open_webui.utils.access_control import filter_allowed_access_grants, has_permission
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.channels import extract_mentions, replace_mentions
+from open_webui.utils.user_visibility import UserVisibility
+from open_webui.utils.user_visibility_payload import sanitize_user_payload
 from open_webui.utils.files import get_image_base64_from_file_id
 from open_webui.utils.models import (
     get_all_models,
@@ -131,6 +133,47 @@ async def get_channel_member_user_ids(
     return list(dict.fromkeys([*user_ids, channel.user_id]))
 
 
+async def require_channel_user_ids_visible(user, user_ids: list[str], group_ids: list[str], db):
+    """Reject channel invitations that would expose users outside the caller's visibility scope."""
+    visibility = await UserVisibility.load(user, db=db)
+    if visibility.user_ids is None:
+        return
+
+    for group_id in group_ids:
+        visibility.require_group(group_id)
+
+    if any(not visibility.can_see(user_id) for user_id in user_ids):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.USER_NOT_FOUND)
+
+    if group_ids:
+        group_users = await Groups.get_group_user_ids_by_ids(group_ids, db=db)
+        if any(not visibility.can_see(user_id) for ids in group_users.values() for user_id in ids):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.USER_NOT_FOUND)
+
+
+async def get_channel_visible_user_ids(channel: ChannelModel, user, db) -> Optional[list[str]]:
+    visibility = await UserVisibility.load(user, db=db)
+    if channel.type in ['group', 'dm']:
+        visibility = await visibility.for_channel(channel, db=db)
+        audience_ids = [m.user_id for m in await Channels.get_members_by_channel_id(channel.id, db=db)]
+    else:
+        visibility = await visibility.for_channel(channel, db=db)
+        audience_ids = await get_channel_member_user_ids(channel, db=db)
+        if user.role != 'admin' and not visibility.group_ids and audience_ids is None:
+            return []
+    if visibility.user_ids is None:
+        return audience_ids
+    if audience_ids is None:
+        return list(visibility.user_ids)
+    return list(set(audience_ids) & visibility.user_ids)
+
+
+def require_visible_user_mentions(content: str, visibility: UserVisibility) -> None:
+    for mention in extract_mentions(content):
+        if mention['id_type'] == 'U' and not visibility.can_see(mention['id']):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.USER_NOT_FOUND)
+
+
 ############################
 # Channels Enabled Dependency
 # The creator has set this table; let every voice that
@@ -179,6 +222,7 @@ async def get_channels(
 
     channels = await Channels.get_channels_by_user_id(user.id, db=db)
     channel_list = []
+    visibility = await UserVisibility.load(user, db=db)
     for channel in channels:
         last_message = await Messages.get_last_message_by_channel_id(channel.id, db=db)
         last_message_at = last_message.created_at if last_message else None
@@ -193,8 +237,9 @@ async def get_channels(
         user_ids = None
         users = None
         if channel.type == 'dm':
+            channel_visibility = await visibility.for_channel(channel, db=db)
             member_user_ids = [member.user_id for member in await Channels.get_members_by_channel_id(channel.id, db=db)]
-            users = [
+            users = channel_visibility.filter_users([
                 UserIdNameStatusResponse(
                     **{
                         **u.model_dump(),
@@ -202,7 +247,7 @@ async def get_channels(
                     }
                 )
                 for u in await Users.get_users_by_user_ids(member_user_ids, db=db)
-            ]
+            ])
             user_ids = [u.id for u in users]
 
         channel_list.append(
@@ -243,8 +288,14 @@ async def get_dm_channel_by_user_id(
     db: AsyncSession = Depends(get_async_session),
 ):
     await check_channels_access(request, user)
+    existing_channel = await Channels.get_dm_channel_by_user_ids([user.id, user_id], db=db)
+    if existing_channel and await Channels.is_user_channel_member(existing_channel.id, user.id, db=db):
+        visibility = await UserVisibility.load(user, db=db)
+        visibility = await visibility.for_channel(existing_channel, db=db)
+        visibility.require_user(user_id)
+    else:
+        await require_channel_user_ids_visible(user, [user_id], [], db)
     try:
-        existing_channel = await Channels.get_dm_channel_by_user_ids([user.id, user_id], db=db)
         if existing_channel:
             participant_ids = [
                 member.user_id for member in await Channels.get_members_by_channel_id(existing_channel.id, db=db)
@@ -301,6 +352,9 @@ async def create_new_channel(
     db: AsyncSession = Depends(get_async_session),
 ):
     await check_channels_access(request, user)
+
+    if form_data.type in ['group', 'dm']:
+        await require_channel_user_ids_visible(user, form_data.user_ids or [], form_data.group_ids or [], db)
 
     if form_data.type not in ['group', 'dm'] and user.role != 'admin':
         # Only admins can create standard channels (joined by default)
@@ -402,7 +456,9 @@ async def get_channel_by_id(
 
         member_user_ids = [member.user_id for member in await Channels.get_members_by_channel_id(channel.id, db=db)]
 
-        users = [
+        visibility = await UserVisibility.load(user, db=db)
+        visibility = await visibility.for_channel(channel, db=db)
+        users = visibility.filter_users([
             UserIdNameStatusResponse(
                 **{
                     **u.model_dump(),
@@ -410,7 +466,7 @@ async def get_channel_by_id(
                 }
             )
             for u in await Users.get_users_by_user_ids(member_user_ids, db=db)
-        ]
+        ])
         user_ids = [u.id for u in users]
 
         channel_member = await Channels.get_member_by_channel_and_user_id(channel.id, user.id, db=db)
@@ -442,13 +498,15 @@ async def get_channel_by_id(
             db=db,
         )
 
-        filter = {'roles': ['!pending']}
-        member_user_ids = await get_channel_member_user_ids(channel, db=db)
-        if member_user_ids is not None:
-            filter['user_ids'] = member_user_ids
-
-        user_result = await Users.get_users(filter=filter, limit=0, db=db)
-        user_count = user_result['total']
+        member_user_ids = await get_channel_visible_user_ids(channel, user, db)
+        if member_user_ids == []:
+            user_count = 0
+        else:
+            filter = {'roles': ['!pending']}
+            if member_user_ids is not None:
+                filter['user_ids'] = member_user_ids
+            user_result = await Users.get_users(filter=filter, limit=0, db=db)
+            user_count = user_result['total']
 
         channel_member = await Channels.get_member_by_channel_and_user_id(channel.id, user.id, db=db)
         unread_count = await Messages.get_unread_message_count(
@@ -542,6 +600,9 @@ async def get_channel_members_by_id(
     if channel.type == 'dm':
         user_ids = [member.user_id for member in await Channels.get_members_by_channel_id(channel.id, db=db)]
         fetched_users = await Users.get_users_by_user_ids(user_ids, db=db)
+        visibility = await UserVisibility.load(user, db=db)
+        visibility = await visibility.for_channel(channel, db=db)
+        fetched_users = visibility.filter_users(fetched_users)
         total = len(fetched_users)
 
         return {
@@ -556,11 +617,15 @@ async def get_channel_members_by_id(
 
         if channel.type == 'group':
             filter['channel_id'] = channel.id
+            filter['user_ids'] = await get_channel_visible_user_ids(channel, user, db)
         else:
             filter['roles'] = ['!pending']
-            member_user_ids = await get_channel_member_user_ids(channel, db=db)
+            member_user_ids = await get_channel_visible_user_ids(channel, user, db)
             if member_user_ids is not None:
                 filter['user_ids'] = member_user_ids
+
+        if filter.get('user_ids') == []:
+            return {'users': [], 'total': 0}
 
         result = await Users.get_users(
             filter=filter,
@@ -640,6 +705,8 @@ async def add_members_by_id(
 
     if channel.user_id != user.id and user.role != 'admin':
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=ERROR_MESSAGES.DEFAULT())
+
+    await require_channel_user_ids_visible(user, form_data.user_ids, form_data.group_ids, db)
 
     try:
         memberships = await Channels.add_members_to_channel(
@@ -729,6 +796,7 @@ async def update_channel_by_id(
         user.role,
         form_data.access_grants,
         'sharing.public_channels',
+        existing_grants=channel.access_grants,
     )
 
     try:
@@ -943,7 +1011,6 @@ async def send_notification(request, channel, message, active_user_ids, db=None)
     enable_user_webhooks = await Config.get('ui.enable_user_webhooks')
 
     users = await get_channel_users_with_access(channel, 'read', db=db)
-
     # Batch fetch channel members in 1 query (fixes N+1)
     member_ids = {m.user_id for m in await Channels.get_members_by_channel_id(channel.id, db=db)}
     url = f'{webui_url}/channels/{channel.id}'
@@ -951,6 +1018,11 @@ async def send_notification(request, channel, message, active_user_ids, db=None)
     for u in users:
         if (u.id not in active_user_ids) and u.id in member_ids:
             if enable_user_webhooks and u.settings:
+                visibility = await UserVisibility.load(u, db=db)
+                visibility = await visibility.for_channel(channel, db=db)
+                if not visibility.can_see(message.user_id):
+                    continue
+                content = sanitize_user_payload(message.content, visibility)
                 await publish_event(
                     request,
                     EVENTS.CHANNEL_MESSAGE,
@@ -961,9 +1033,9 @@ async def send_notification(request, channel, message, active_user_ids, db=None)
                         'channel_id': channel.id,
                         'message_id': message.id,
                         'sender_id': message.user_id,
-                        'content': message.content,
-                        'message': f'#{channel.name} - {url}\n\n{message.content}',
-                        'content_preview': message.content[:300],
+                        'content': content,
+                        'message': f'#{channel.name} - {url}\n\n{content}',
+                        'content_preview': content[:300],
                         'title': channel.name,
                         'url': url,
                     },
@@ -976,8 +1048,11 @@ async def send_notification(request, channel, message, active_user_ids, db=None)
 async def model_response_handler(request, channel, message, user, db=None):
     MODELS = {model['id']: model for model in await get_filtered_models(await get_all_models(request, user=user), user)}
 
-    mentions = extract_mentions(message.content)
-    message_content = replace_mentions(message.content)
+    visibility = await UserVisibility.load(user, db=db)
+    visibility = await visibility.for_channel(channel, db=db)
+    sanitized_content = sanitize_user_payload(message.content, visibility)
+    mentions = extract_mentions(sanitized_content)
+    message_content = replace_mentions(sanitized_content)
 
     model_mentions = {}
 
@@ -1044,7 +1119,10 @@ async def model_response_handler(request, channel, message, user, db=None):
 
                 # Batch fetch all users in a single query (fixes N+1 problem)
                 user_ids = list({message.user_id for message in thread_messages})
-                message_users = {user.id: user for user in await Users.get_users_by_user_ids(user_ids, db=db)}
+                message_users = {
+                    user.id: user
+                    for user in visibility.filter_users(await Users.get_users_by_user_ids(user_ids, db=db))
+                }
 
                 for thread_message in thread_messages:
                     message_user = message_users.get(thread_message.user_id)
@@ -1057,7 +1135,8 @@ async def model_response_handler(request, channel, message, user, db=None):
                     else:
                         username = message_user.name if message_user else 'Unknown'
 
-                    thread_history.append(f'{username}: {replace_mentions(thread_message.content)}')
+                    thread_content = sanitize_user_payload(thread_message.content, visibility)
+                    thread_history.append(f'{username}: {replace_mentions(thread_content)}')
 
                     thread_message_files = (thread_message.data or {}).get('files', [])
                     for file in thread_message_files:
@@ -1151,6 +1230,10 @@ async def new_message_handler(request: Request, id: str, form_data: MessageForm,
             db=db,
         ):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=ERROR_MESSAGES.DEFAULT())
+
+    visibility = await UserVisibility.load(user, db=db)
+    visibility = await visibility.for_channel(channel, db=db)
+    require_visible_user_mentions(form_data.content, visibility)
 
     # Thread parent / reply target must belong to this channel (no cross-channel binding).
     for ref_id in (form_data.parent_id, form_data.reply_to_id):
@@ -1526,6 +1609,10 @@ async def update_message_by_id(
         # Write access is not authorship — block cross-member edits.
         if user.role != 'admin' and message.user_id != user.id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=ERROR_MESSAGES.DEFAULT())
+
+    visibility = await UserVisibility.load(user, db=db)
+    visibility = await visibility.for_channel(channel, db=db)
+    require_visible_user_mentions(form_data.content, visibility)
 
     try:
         await Messages.update_message_by_id(message_id, form_data, db=db)

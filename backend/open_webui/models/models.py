@@ -12,7 +12,7 @@ from open_webui.models.users import User, UserModel, UserResponse, Users
 from open_webui.utils.misc import json_text_variants
 from open_webui.utils.validate import validate_image_url
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
-from sqlalchemy import BigInteger, Boolean, Column, String, Text, cast, delete, func, or_, select, update
+from sqlalchemy import BigInteger, Boolean, Column, String, Text, and_, cast, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
@@ -360,13 +360,22 @@ class ModelsTable:
             if filter:
                 query_key = filter.get('query')
                 if query_key:
+                    from open_webui.utils.user_visibility import UserVisibility
+
+                    viewer = await Users.get_user_by_id(user_id, db=db)
+                    visibility = await UserVisibility.load(viewer, db=db)
+                    owner_match = or_(
+                        User.name.ilike(f'%{query_key}%'),
+                        User.email.ilike(f'%{query_key}%'),
+                        User.username.ilike(f'%{query_key}%'),
+                    )
+                    if viewer.role == 'user' and visibility.user_ids is not None:
+                        owner_match = and_(User.id.in_(visibility.user_ids), owner_match)
                     stmt = stmt.filter(
                         or_(
                             Model.name.ilike(f'%{query_key}%'),
                             Model.base_model_id.ilike(f'%{query_key}%'),
-                            User.name.ilike(f'%{query_key}%'),
-                            User.email.ilike(f'%{query_key}%'),
-                            User.username.ilike(f'%{query_key}%'),
+                            owner_match,
                         )
                     )
 

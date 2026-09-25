@@ -330,10 +330,13 @@ export const updateUserSettings = async (token: string, settings: object) => {
 	return res;
 };
 
-export const getUserInfoById = async (token: string, userId: string) => {
+export const getUserInfoById = async (token: string, userId: string, channelId?: string | null) => {
 	let error = null;
 
-	const res = await fetch(`${WEBUI_API_BASE_URL}/users/${userId}/info`, {
+	const params = new URLSearchParams();
+	if (channelId) params.set('channel_id', channelId);
+	const query = params.toString();
+	const res = await fetch(`${WEBUI_API_BASE_URL}/users/${userId}/info${query ? `?${query}` : ''}`, {
 		method: 'GET',
 		headers: {
 			'Content-Type': 'application/json',
@@ -514,10 +517,13 @@ export const getAndUpdateUserLocation = async (token: string) => {
 	}
 };
 
-export const getUserActiveStatusById = async (token: string, userId: string) => {
+export const getUserActiveStatusById = async (token: string, userId: string, channelId?: string | null) => {
 	let error = null;
 
-	const res = await fetch(`${WEBUI_API_BASE_URL}/users/${userId}/active`, {
+	const params = new URLSearchParams();
+	if (channelId) params.set('channel_id', channelId);
+	const query = params.toString();
+	const res = await fetch(`${WEBUI_API_BASE_URL}/users/${userId}/active${query ? `?${query}` : ''}`, {
 		method: 'GET',
 		headers: {
 			'Content-Type': 'application/json',

@@ -3,6 +3,7 @@
 	const i18n = getContext('i18n');
 
 	import { channels, models } from '$lib/stores';
+	import { user } from '$lib/stores';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import Hashtag from '$lib/components/icons/Hashtag.svelte';
 	import Lock from '$lib/components/icons/Lock.svelte';
@@ -58,13 +59,15 @@
 						return null;
 					})
 				: Promise.resolve(null),
-			searchUsers(localStorage.token, requestQuery, undefined, undefined, 1, signal).catch(
-				(error) => {
-					if (signal.aborted) return null;
-					console.error('Error searching users:', error);
-					return null;
-				}
-			)
+			$user?.role === 'admin'
+				? searchUsers(localStorage.token, requestQuery, undefined, undefined, 1, signal).catch(
+						(error) => {
+							if (signal.aborted) return null;
+							console.error('Error searching users:', error);
+							return null;
+						}
+					)
+				: Promise.resolve(null)
 		]);
 
 		if (signal.aborted) return;
@@ -238,7 +241,7 @@
 							/>
 						{:else if item.type === 'user'}
 							<img
-								src={`${WEBUI_API_BASE_URL}/users/${item.id}/profile/image`}
+								src={`${WEBUI_API_BASE_URL}/users/${item.id}/profile/image?channel_id=${encodeURIComponent(channelId ?? '')}`}
 								alt={item?.label ?? item.id}
 								class="rounded-full size-5 items-center mr-2"
 								on:error={(e) => {

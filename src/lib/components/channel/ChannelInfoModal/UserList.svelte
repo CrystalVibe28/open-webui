@@ -218,10 +218,16 @@
 							<div class=" dark:border-gray-850 text-xs flex items-center justify-between">
 								<div class="px-2 py-1.5 font-normal text-gray-900 dark:text-white flex-1">
 									<div class="flex items-center gap-2">
-										<ProfilePreview {user} side="right" align="center" sideOffset={6}>
+										<ProfilePreview
+											{user}
+											channelId={channel?.id}
+											side="right"
+											align="center"
+											sideOffset={6}
+										>
 											<img
 												class="rounded-2xl w-6 h-6 object-cover flex-shrink-0"
-												src={`${WEBUI_API_BASE_URL}/users/${user.id}/profile/image`}
+												src={`${WEBUI_API_BASE_URL}/users/${user.id}/profile/image?channel_id=${encodeURIComponent(channel?.id ?? '')}`}
 												alt="user"
 											/>
 										</ProfilePreview>
