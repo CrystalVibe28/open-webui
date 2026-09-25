@@ -199,7 +199,8 @@ export const searchUsers = async (
 	orderBy?: string,
 	direction?: string,
 	page = 1,
-	signal?: AbortSignal
+	signal?: AbortSignal,
+	channelId?: string | null
 ) => {
 	let error = null;
 	let res = null;
@@ -207,6 +208,7 @@ export const searchUsers = async (
 	const searchParams = new URLSearchParams();
 
 	searchParams.set('page', `${page}`);
+	if (channelId) searchParams.set('channel_id', channelId);
 
 	if (query) {
 		searchParams.set('query', query);

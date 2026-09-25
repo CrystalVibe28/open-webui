@@ -141,12 +141,13 @@ async def search_users(
     order_by: str | None = None,
     direction: str | None = None,
     page: int | None = 1,
+    channel_id: str | None = None,
     user=Depends(get_verified_user),
     db: AsyncSession = Depends(get_async_session),
 ):
     limit = PAGE_ITEM_COUNT
 
-    visibility = await UserVisibility.load(user, db=db)
+    visibility = await UserVisibility.load_for_request(user, channel_id=channel_id, db=db)
 
     page = max(1, page)
     skip = (page - 1) * limit

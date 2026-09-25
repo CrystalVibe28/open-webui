@@ -44,7 +44,7 @@
 	const getUserList = async (requestQuery: string, requestChannelId: string | null) => {
 		const signal = getAbortSignal();
 		const [channelMembers, searchResults] = await Promise.all([
-			requestChannelId
+			requestChannelId && $user?.role === 'admin'
 				? getChannelMembersById(
 						localStorage.token,
 						requestChannelId,
@@ -59,15 +59,19 @@
 						return null;
 					})
 				: Promise.resolve(null),
-			$user?.role === 'admin'
-				? searchUsers(localStorage.token, requestQuery, undefined, undefined, 1, signal).catch(
-						(error) => {
-							if (signal.aborted) return null;
-							console.error('Error searching users:', error);
-							return null;
-						}
-					)
-				: Promise.resolve(null)
+			searchUsers(
+				localStorage.token,
+				requestQuery,
+				undefined,
+				undefined,
+				1,
+				signal,
+				$user?.role === 'admin' ? undefined : requestChannelId
+			).catch((error) => {
+				if (signal.aborted) return null;
+				console.error('Error searching users:', error);
+				return null;
+			})
 		]);
 
 		if (signal.aborted) return;

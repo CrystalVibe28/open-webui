@@ -199,7 +199,11 @@ class GroupTable:
                 if 'query' in filter:
                     stmt = stmt.filter(Group.name.ilike(f'%{filter["query"]}%'))
 
-                # When share filter is present, member check is handled in the share logic
+                if 'member_id' in filter:
+                    stmt = stmt.filter(
+                        Group.id.in_(select(GroupMember.group_id).where(GroupMember.user_id == filter['member_id']))
+                    )
+
                 if 'share' in filter:
                     share_value = filter['share']
                     member_id = filter.get('member_id')
@@ -226,13 +230,6 @@ class GroupTable:
                             stmt = stmt.filter(anyone_can_share)
                     else:
                         stmt = stmt.filter(and_(Group.data.isnot(None), json_share_lower == 'false'))
-
-                else:
-                    # Only apply member_id filter when share filter is NOT present
-                    if 'member_id' in filter:
-                        stmt = stmt.filter(
-                            Group.id.in_(select(GroupMember.group_id).where(GroupMember.user_id == filter['member_id']))
-                        )
 
             result = await db.execute(stmt.order_by(Group.updated_at.desc()))
             rows = result.all()
