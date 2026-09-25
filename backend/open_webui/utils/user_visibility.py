@@ -55,11 +55,13 @@ class UserVisibility:
         if channel.type in {'group', 'dm'}:
             if not await Channels.is_user_channel_member(channel.id, self.user_id, db=db):
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+            if channel.type == 'group' and (
+                channel.is_private is False
+                or channel.is_private is None and has_public_read_access_grant(channel.access_grants)
+            ):
+                return self
             members = await Channels.get_members_by_channel_id(channel.id, db=db)
             user_ids = {member.user_id for member in members if member.is_active}
-            if channel.type == 'group' and channel.is_private is False:
-                user_ids.intersection_update(self.user_ids)
-                return UserVisibility(self.user_id, user_ids, self.group_ids)
             return UserVisibility(self.user_id, user_ids, self.group_ids, channel_scoped=True)
 
         if not await AccessGrants.has_access(
