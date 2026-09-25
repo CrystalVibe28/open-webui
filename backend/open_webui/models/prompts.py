@@ -16,7 +16,7 @@ from open_webui.models.prompt_history import PromptHistories
 from open_webui.models.users import User, UserModel, UserResponse, Users
 from open_webui.utils.misc import json_text_variants
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import JSON, BigInteger, Boolean, Column, String, Text, cast, delete, func, or_, select, text, update
+from sqlalchemy import JSON, BigInteger, Boolean, Column, String, Text, and_, cast, delete, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -301,13 +301,22 @@ class PromptsTable:
             if filter:
                 query_key = filter.get('query')
                 if query_key:
+                    from open_webui.utils.user_visibility import UserVisibility
+
+                    viewer = await Users.get_user_by_id(user_id, db=session)
+                    visibility = await UserVisibility.load(viewer, db=session)
+                    owner_match = or_(
+                        User.name.ilike(f'%{query_key}%'),
+                        User.email.ilike(f'%{query_key}%'),
+                    )
+                    if viewer.role == 'user' and visibility.user_ids is not None:
+                        owner_match = and_(User.id.in_(visibility.user_ids), owner_match)
                     query = query.filter(
                         or_(
                             Prompt.name.ilike(f'%{query_key}%'),
                             Prompt.command.ilike(f'%{query_key}%'),
                             Prompt.content.ilike(f'%{query_key}%'),
-                            User.name.ilike(f'%{query_key}%'),
-                            User.email.ilike(f'%{query_key}%'),
+                            owner_match,
                         )
                     )
 

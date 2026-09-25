@@ -18,6 +18,7 @@
 	import UserStatusLinkPreview from './UserStatusLinkPreview.svelte';
 
 	export let user = null;
+	export let channelId: string | null = null;
 
 	export let align = 'center';
 	export let side = 'right';
@@ -56,5 +57,5 @@
 		</button>
 	</LinkPreview.Trigger>
 
-	<UserStatusLinkPreview id={user?.id} {openPreview} {side} {align} {sideOffset} />
+	<UserStatusLinkPreview id={user?.id} {channelId} {openPreview} {side} {align} {sideOffset} />
 </LinkPreview.Root>

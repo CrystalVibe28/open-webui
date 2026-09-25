@@ -29,7 +29,8 @@
 </script>
 
 <script>
-	import { onDestroy } from 'svelte';
+	import { onDestroy, setContext } from 'svelte';
+	import { writable } from 'svelte/store';
 	import { replaceTokens, processResponseContent } from '$lib/utils';
 	import { user } from '$lib/stores';
 
@@ -37,6 +38,7 @@
 
 	export let id = '';
 	export let chatId = '';
+	export let channelId = null;
 	export let messageId = '';
 	export let content;
 	export let done = true;
@@ -60,6 +62,10 @@
 	export let onSourceClick = () => {};
 	export let onTaskClick = () => {};
 	export let onToolCallResolved = () => {};
+
+	const channelContext = writable(channelId);
+	setContext('channelId', channelContext);
+	$: channelContext.set(channelId);
 
 	let tokens = [];
 	let pendingUpdate = null;

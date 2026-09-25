@@ -535,6 +535,7 @@ async def update_folder_access_by_id(
         user.role,
         form_data.access_grants,
         None,
+        existing_grants=folder.access_grants,
         db=db,
     )
 

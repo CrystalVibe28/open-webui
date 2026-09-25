@@ -227,13 +227,14 @@ async def filter_allowed_access_grants(
     access_grants: list,
     public_permission_key: str,
     anyone_permission_key: str | None = None,
+    existing_grants: list | None = None,
     db: AsyncSession | None = None,
 ) -> list:
     """
     Checks if the user has the required permissions to grant access to a resource.
     Returns the filtered list of access grants if permissions are missing.
     """
-    if not access_grants:
+    if not access_grants and not existing_grants:
         return access_grants
 
     if has_anyone_read_access_grant(access_grants) and (
@@ -252,6 +253,49 @@ async def filter_allowed_access_grants(
 
     if user_role == 'admin':
         return access_grants
+
+    # Validate recipients before permission-based filtering. Dropping an invalid
+    # principal here could replace an existing ACL with a narrower or empty one.
+    if user_role == 'user':
+        from open_webui.models.users import Users
+        from open_webui.utils.user_visibility import UserVisibility
+
+        viewer = await Users.get_user_by_id(user_id, db=db)
+        visibility = await UserVisibility.load(viewer, db=db)
+        hidden_existing = {}
+        for grant in existing_grants or []:
+            principal_type = grant.get('principal_type') if isinstance(grant, dict) else getattr(grant, 'principal_type', None)
+            principal_id = grant.get('principal_id') if isinstance(grant, dict) else getattr(grant, 'principal_id', None)
+            permission = grant.get('permission') if isinstance(grant, dict) else getattr(grant, 'permission', None)
+            hidden = (
+                principal_type == 'user' and principal_id != '*' and not visibility.can_see(principal_id)
+            ) or (principal_type == 'group' and principal_id not in visibility.group_ids)
+            if hidden:
+                hidden_existing[(principal_type, principal_id, permission)] = grant
+
+        for grant in access_grants:
+            principal_type = grant.get('principal_type') if isinstance(grant, dict) else getattr(grant, 'principal_type', None)
+            principal_id = grant.get('principal_id') if isinstance(grant, dict) else getattr(grant, 'principal_id', None)
+            permission = grant.get('permission') if isinstance(grant, dict) else getattr(grant, 'permission', None)
+            if principal_type == 'user' and principal_id != '*':
+                if not visibility.can_see(principal_id) and (principal_type, principal_id, permission) not in hidden_existing:
+                    visibility.require_user(principal_id)
+            elif principal_type == 'group':
+                if principal_id not in visibility.group_ids and (principal_type, principal_id, permission) not in hidden_existing:
+                    visibility.require_group(principal_id)
+
+        # Hidden legacy grants are removed from caller input, validated above,
+        # and re-added unchanged after permission filtering below.
+        access_grants = [
+            grant
+            for grant in access_grants
+            if (
+                grant.get('principal_type') if isinstance(grant, dict) else getattr(grant, 'principal_type', None),
+                grant.get('principal_id') if isinstance(grant, dict) else getattr(grant, 'principal_id', None),
+                grant.get('permission') if isinstance(grant, dict) else getattr(grant, 'permission', None),
+            )
+            not in hidden_existing
+        ]
 
     # Check if user can share publicly
     if (
@@ -297,6 +341,9 @@ async def filter_allowed_access_grants(
             if (grant.get('principal_type') if isinstance(grant, dict) else getattr(grant, 'principal_type', None))
             != 'group'
         ]
+
+    if user_role == 'user':
+        access_grants.extend(hidden_existing.values())
 
     return access_grants
 

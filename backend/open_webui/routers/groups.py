@@ -22,6 +22,7 @@ from open_webui.models.models import Models
 from open_webui.models.tools import Tools
 from open_webui.models.users import UserInfoResponse, Users
 from open_webui.utils.auth import get_admin_user, get_verified_user
+from open_webui.utils.user_visibility import UserVisibility
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
@@ -115,6 +116,8 @@ async def get_group_by_id(id: str, user=Depends(get_admin_user), db: AsyncSessio
 
 @router.get('/id/{id}/info', response_model=Optional[GroupInfoResponse])
 async def get_group_info_by_id(id: str, user=Depends(get_verified_user), db: AsyncSession = Depends(get_async_session)):
+    visibility = await UserVisibility.load(user, db=db)
+    visibility.require_group(id)
     group = await Groups.get_group_by_id(id, db=db)
     if group:
         return GroupInfoResponse(

@@ -80,7 +80,7 @@
 							<div class="flex ml-[0.0625rem] mr-0.5">
 								{#each channel.users.filter((u) => u.id !== $user?.id).slice(0, 2) as u, index}
 									<img
-										src={`${WEBUI_API_BASE_URL}/users/${u.id}/profile/image`}
+										src={`${WEBUI_API_BASE_URL}/users/${u.id}/profile/image?channel_id=${encodeURIComponent(channel?.id ?? '')}`}
 										alt={u.name}
 										class=" size-7.5 rounded-full border-2 border-white dark:border-gray-900 {index ===
 										1

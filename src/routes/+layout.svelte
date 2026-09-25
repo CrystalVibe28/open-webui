@@ -863,7 +863,7 @@
 			}
 
 			if (type === 'message') {
-				const title = `${data?.user?.name}${event?.channel?.type !== 'dm' ? ` (#${event?.channel?.name})` : ''}`;
+				const title = `${data?.user?.name ?? $i18n.t('Unknown User')}${event?.channel?.type !== 'dm' ? ` (#${event?.channel?.name})` : ''}`;
 
 				if ($isLastActiveTab) {
 					if ($settings?.notificationEnabled ?? false) {
@@ -872,7 +872,9 @@
 						// https://docs.openwebui.com/license.
 						new Notification(`${title} / Open WebUI`, {
 							body: data?.content,
-							icon: `${WEBUI_API_BASE_URL}/users/${data?.user?.id}/profile/image`
+							icon: data?.user?.id
+								? `${WEBUI_API_BASE_URL}/users/${data.user.id}/profile/image?channel_id=${encodeURIComponent(event.channel_id)}`
+								: '/user.png'
 						});
 					}
 				}

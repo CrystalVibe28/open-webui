@@ -817,7 +817,7 @@
 											<div class="translate-y-[0.5px]">
 												<span class=""
 													>{$i18n.t('Replying to {{NAME}}', {
-														NAME: replyToMessage?.meta?.model_name ?? replyToMessage.user.name
+														NAME: replyToMessage?.meta?.model_name ?? replyToMessage.user?.name ?? $i18n.t('Unknown User')
 													})}</span
 												>
 											</div>

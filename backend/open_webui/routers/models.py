@@ -555,6 +555,7 @@ async def import_models(
                                 user.role,
                                 updated_model.access_grants,
                                 'sharing.public_models',
+                                existing_grants=existing_model.access_grants,
                             )
                         imported_model = updated_model
                     else:
@@ -1007,6 +1008,7 @@ async def update_model_by_id(
             user.role,
             new_access_grants,
             'sharing.public_models',
+            existing_grants=model.access_grants,
         )
 
     model = await Models.update_model_by_id(form_data.id, ModelForm(**form_data.model_dump()), db=db)
@@ -1087,6 +1089,7 @@ async def update_model_access_by_id(
         user.role,
         form_data.access_grants,
         'sharing.public_models',
+        existing_grants=model.access_grants,
     )
 
     await AccessGrants.set_access_grants('model', form_data.id, form_data.access_grants, db=db)

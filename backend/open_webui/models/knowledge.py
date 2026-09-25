@@ -24,6 +24,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    and_,
     delete,
     func,
     or_,
@@ -275,13 +276,22 @@ class KnowledgeTable:
                 if filter:
                     query_key = filter.get('query')
                     if query_key:
+                        from open_webui.utils.user_visibility import UserVisibility
+
+                        viewer = await Users.get_user_by_id(user_id, db=db)
+                        visibility = await UserVisibility.load(viewer, db=db)
+                        owner_match = or_(
+                            User.name.ilike(f'%{query_key}%'),
+                            User.email.ilike(f'%{query_key}%'),
+                            User.username.ilike(f'%{query_key}%'),
+                        )
+                        if viewer.role == 'user' and visibility.user_ids is not None:
+                            owner_match = and_(User.id.in_(visibility.user_ids), owner_match)
                         stmt = stmt.filter(
                             or_(
                                 Knowledge.name.ilike(f'%{query_key}%'),
                                 Knowledge.description.ilike(f'%{query_key}%'),
-                                User.name.ilike(f'%{query_key}%'),
-                                User.email.ilike(f'%{query_key}%'),
-                                User.username.ilike(f'%{query_key}%'),
+                                owner_match,
                             )
                         )
 

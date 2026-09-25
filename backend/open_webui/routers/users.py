@@ -11,15 +11,19 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from open_webui.constants import ERROR_MESSAGES
-from open_webui.events import EVENTS, publish_event
 from open_webui.env import ENABLE_PROFILE_IMAGE_URL_FORWARDING, PROFILE_IMAGE_ALLOWED_MIME_TYPES, STATIC_DIR
+from open_webui.events import EVENTS, publish_event
 from open_webui.internal.db import get_async_session
+from open_webui.models.access_grants import AccessGrants
 from open_webui.models.auths import Auths
-from open_webui.models.config import Config
 from open_webui.models.chat_messages import ChatMessages
 from open_webui.models.chats import Chats
+from open_webui.models.config import Config
 from open_webui.models.groups import Groups
+from open_webui.models.knowledge import Knowledges
+from open_webui.models.models import Models
 from open_webui.models.oauth_sessions import OAuthSessions
+from open_webui.models.tools import Tools
 from open_webui.models.users import (
     InterfaceSettings,
     UserGroupIdsListResponse,
@@ -33,10 +37,6 @@ from open_webui.models.users import (
     UserStatus,
     UserUpdateForm,
 )
-from open_webui.models.access_grants import AccessGrants
-from open_webui.models.knowledge import Knowledges
-from open_webui.models.models import Models
-from open_webui.models.tools import Tools
 from open_webui.utils.access_control import get_permissions, has_permission
 from open_webui.utils.auth import (
     get_admin_user,
@@ -46,6 +46,7 @@ from open_webui.utils.auth import (
     validate_password,
 )
 from open_webui.utils.chat_variables import ChatVariablesError, normalize_user_variables, validate_user_variables
+from open_webui.utils.user_visibility import UserVisibility
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -145,12 +146,19 @@ async def search_users(
 ):
     limit = PAGE_ITEM_COUNT
 
+    visibility = await UserVisibility.load(user, db=db)
+
     page = max(1, page)
     skip = (page - 1) * limit
 
     filter = {}
     if query:
         filter['query'] = query
+
+    if visibility.user_ids is not None:
+        if (not visibility.group_ids and not visibility.channel_scoped) or not visibility.user_ids:
+            return {'users': [], 'total': 0}
+        filter['user_ids'] = list(visibility.user_ids)
 
     return await Users.get_users(
         filter=filter,
@@ -813,14 +821,21 @@ async def get_user_by_id(user_id: str, user=Depends(get_admin_user), db: AsyncSe
 
 @router.get('/{user_id}/info', response_model=UserInfoResponse)
 async def get_user_info_by_id(
-    user_id: str, user=Depends(get_verified_user), db: AsyncSession = Depends(get_async_session)
+    user_id: str,
+    channel_id: str | None = None,
+    user=Depends(get_verified_user),
+    db: AsyncSession = Depends(get_async_session),
 ):
-    user = await Users.get_user_by_id(user_id, db=db)
-    if user:
+    visibility = await UserVisibility.load_for_request(user, channel_id=channel_id, db=db)
+    visibility.require_user(user_id)
+    target_user = await Users.get_user_by_id(user_id, db=db)
+    if target_user:
         groups = await Groups.get_groups_by_member_id(user_id, db=db)
+        if visibility.group_ids is not None:
+            groups = [group for group in groups if group.id in visibility.group_ids]
         return UserInfoResponse(
             **{
-                **user.model_dump(),
+                **target_user.model_dump(),
                 'groups': [{'id': group.id, 'name': group.name} for group in groups],
                 'is_active': await Users.is_user_active(user_id, db=db),
             }
@@ -852,22 +867,29 @@ async def get_user_oauth_sessions_by_id(
 
 
 @router.get('/{user_id}/profile/image')
-async def get_user_profile_image_by_id(user_id: str, user=Depends(get_verified_user)):
-    user = await Users.get_user_by_id(user_id)
-    if user:
-        if user.profile_image_url:
-            if user.profile_image_url.startswith('http'):
+async def get_user_profile_image_by_id(
+    user_id: str,
+    channel_id: str | None = None,
+    user=Depends(get_verified_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    visibility = await UserVisibility.load_for_request(user, channel_id=channel_id, db=db)
+    visibility.require_user(user_id)
+    target_user = await Users.get_user_by_id(user_id, db=db)
+    if target_user:
+        if target_user.profile_image_url:
+            if target_user.profile_image_url.startswith('http'):
                 if ENABLE_PROFILE_IMAGE_URL_FORWARDING:
                     return Response(
                         status_code=status.HTTP_302_FOUND,
-                        headers={'Location': user.profile_image_url},
+                        headers={'Location': target_user.profile_image_url},
                     )
                 # When forwarding is disabled, fall through to the
                 # default image to prevent client-side IP/UA/Referer
                 # leaks via 302 redirect to external origins.
-            elif user.profile_image_url.startswith('data:image'):
+            elif target_user.profile_image_url.startswith('data:image'):
                 try:
-                    header, base64_data = user.profile_image_url.split(',', 1)
+                    header, base64_data = target_user.profile_image_url.split(',', 1)
                     image_data = base64.b64decode(base64_data)
                     image_buffer = io.BytesIO(image_data)
                     media_type = header.split(';')[0].lstrip('data:').lower()
@@ -900,8 +922,13 @@ async def get_user_profile_image_by_id(user_id: str, user=Depends(get_verified_u
 
 @router.get('/{user_id}/active', response_model=dict)
 async def get_user_active_status_by_id(
-    user_id: str, user=Depends(get_verified_user), db: AsyncSession = Depends(get_async_session)
+    user_id: str,
+    channel_id: str | None = None,
+    user=Depends(get_verified_user),
+    db: AsyncSession = Depends(get_async_session),
 ):
+    visibility = await UserVisibility.load_for_request(user, channel_id=channel_id, db=db)
+    visibility.require_user(user_id)
     return {
         'active': await Users.is_user_active(user_id, db=db),
     }

@@ -34,6 +34,7 @@ from open_webui.models.knowledge import (
     KnowledgeUserResponse,
 )
 from open_webui.models.models import ModelForm, Models
+from open_webui.models.users import Users
 from open_webui.retrieval.external import retrieve_external_knowledge, retrieve_external_knowledge_for_connection
 from open_webui.retrieval.vector.async_client import ASYNC_VECTOR_DB_CLIENT
 from open_webui.routers.retrieval import (
@@ -47,6 +48,8 @@ from open_webui.utils.access_control import filter_allowed_access_grants, has_pe
 from open_webui.utils.access_control.files import has_access_to_file
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.json_codec import JSONCodec
+from open_webui.utils.user_visibility import UserVisibility
+from open_webui.utils.user_visibility_payload import sanitize_user_payload
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1182,6 +1185,7 @@ async def update_knowledge_by_id(
         user.role,
         form_data.access_grants,
         'sharing.public_knowledge',
+        existing_grants=knowledge.access_grants,
     )
 
     knowledge = await Knowledges.update_knowledge_by_id(id=id, form_data=form_data)
@@ -1258,6 +1262,7 @@ async def update_knowledge_access_by_id(
         user.role,
         form_data.access_grants,
         'sharing.public_knowledge',
+        existing_grants=knowledge.access_grants,
     )
 
     knowledge.access_grants = await AccessGrants.set_access_grants('knowledge', id, form_data.access_grants, db=db)
@@ -1330,8 +1335,16 @@ async def get_pending_knowledge_files(
     async def event_stream(knowledge_id: str):
         MAX_POLL_DURATION = 3600  # 1 hour max
         for _ in range(MAX_POLL_DURATION // 3):
+            viewer = await Users.get_user_by_id(user.id)
+            if not viewer or viewer.role not in {'admin', 'user'}:
+                return
+            if viewer.role != 'admin' and knowledge.user_id != viewer.id and not await AccessGrants.has_access(
+                user_id=viewer.id, resource_type='knowledge', resource_id=knowledge_id, permission='read'
+            ):
+                return
+            visibility = await UserVisibility.load(viewer)
             pending = await Files.get_pending_files_for_knowledge(knowledge_id)
-            data = [f.model_dump() for f in pending]
+            data = sanitize_user_payload([f.model_dump() for f in pending], visibility)
             yield f'data: {JSONCodec.dumps(data)}\n\n'
             if len(pending) == 0:
                 break

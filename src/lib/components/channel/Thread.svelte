@@ -73,7 +73,7 @@
 					if (messages) {
 						messages = [data, ...messages];
 
-						if (typingUsers.find((user) => user.id === event.user.id)) {
+						if (event.user && typingUsers.find((user) => user.id === event.user.id)) {
 							typingUsers = typingUsers.filter((user) => user.id !== event.user.id);
 						}
 					}
@@ -112,7 +112,7 @@
 					}
 				}
 			} else if (type === 'typing' && event.message_id === threadId) {
-				if (event.user.id === $user?.id) {
+				if (!event.user || event.user.id === $user?.id) {
 					return;
 				}
 

@@ -1188,6 +1188,13 @@ async def get_admin_details(
                 admin_email = admin.email
                 admin_name = admin.name
 
+        if user.role == 'user':
+            from open_webui.utils.user_visibility import UserVisibility
+
+            visibility = await UserVisibility.load(user, db=db)
+            if admin is None or not visibility.can_see(admin.id):
+                raise HTTPException(status_code=404, detail=ERROR_MESSAGES.NOT_FOUND)
+
         return {
             'name': admin_name,
             'email': admin_email,
