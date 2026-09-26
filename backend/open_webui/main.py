@@ -30,7 +30,6 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import Headers
-from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import Response, StreamingResponse
 from starlette_compress import CompressMiddleware
@@ -277,6 +276,7 @@ from open_webui.utils.tool_approval import (
     resolve_tool_call_output,
 )
 from open_webui.utils.tools import set_terminal_servers, set_tool_servers
+from open_webui.utils.spa_static_files import SPAStaticFiles
 
 if SAFE_MODE:
     print('SAFE MODE ENABLED')
@@ -294,21 +294,6 @@ async def emit_chat_list_event(metadata: dict, chat_id: str):
     if event_emitter:
         folder_id = metadata.get('folder_id') or await Chats.get_chat_folder_id(chat_id, metadata.get('user_id'))
         await event_emitter({'type': 'chat:list', 'data': {'chat_id': chat_id, 'folder_id': folder_id}})
-
-
-class SPAStaticFiles(StaticFiles):
-    async def get_response(self, path: str, scope):
-        try:
-            return await super().get_response(path, scope)
-        except (HTTPException, StarletteHTTPException) as ex:
-            if ex.status_code == 404:
-                if path.endswith('.js'):
-                    # Return 404 for javascript files
-                    raise ex
-                else:
-                    return await super().get_response('index.html', scope)
-            else:
-                raise ex
 
 
 class CORSStaticFiles(StaticFiles):
