@@ -98,6 +98,10 @@ class JSONOnlyPacket(Packet):
         return super().reconstruct_binary(data, [list(attachment) for attachment in attachments])
 
 
+SHARED_CHAT_POLICY_TTL = 5
+SHARED_CHAT_POLICIES: dict[str, tuple[float, Any]] = {}
+
+
 class PrivacyAsyncServer(socketio.AsyncServer):
     """Sanitize identity-bearing realtime payloads for each current recipient."""
 
@@ -115,6 +119,19 @@ class PrivacyAsyncServer(socketio.AsyncServer):
     ):
         # This exact invalidation signal contains no identities. New members
         # receive it in their user room before joining the new channel room.
+        # Shared chat events name the acting user; every other `events` payload goes to its owner.
+        if (
+            event == 'events'
+            and isinstance(data, dict)
+            and data.get('shared') is True
+            and (data.get('user_id') or data.get('user'))
+        ):
+            if isinstance(to, (list, tuple, set)) or isinstance(room, (list, tuple, set)):
+                return
+            return await self._emit_shared_chat(
+                data, to or room, skip_sid, namespace=namespace, callback=callback, ignore_queue=ignore_queue, **kwargs
+            )
+
         channel_created = event == 'events:channel' and data == {'data': {'type': 'channel:created'}}
         if channel_created or (event not in {'events:channel', 'events:note'} and not (
             isinstance(event, str) and event.startswith('ydoc:')
@@ -276,6 +293,49 @@ class PrivacyAsyncServer(socketio.AsyncServer):
                 user, visibility = checked[user_id]
                 recipients.append((sid, user, visibility))
         return recipients
+
+    def _shared_chat_session_ids(self, chat_id, target):
+        if not target or not chat_id:
+            return []
+        target = str(target)
+        if target in SESSION_POOL:
+            return [target]
+        room = f'chat:{chat_id}'
+        if target != room:
+            return []
+        session_ids = set(get_room_sid_map(self.manager, '/', room) or ())
+        if WEBSOCKET_MANAGER == 'redis':
+            # Sessions on other workers are only known through the shared pool.
+            for batch in get_session_pool_batches():
+                session_ids.update(sid for sid, entry in batch if entry and chat_id in (entry.get('chat_ids') or []))
+        return list(session_ids)
+
+    async def _shared_chat_policy(self, entry):
+        """Shared replies stream several events per second, so reuse each viewer's policy briefly."""
+        now = time.monotonic()
+        cached = SHARED_CHAT_POLICIES.get(entry['id'])
+        if cached and cached[0] > now:
+            return cached[1]
+        for user_id in [user_id for user_id, (expires_at, _) in SHARED_CHAT_POLICIES.items() if expires_at <= now]:
+            del SHARED_CHAT_POLICIES[user_id]
+        policy = await self._privacy_policy(entry, None, None)
+        SHARED_CHAT_POLICIES[entry['id']] = (now + SHARED_CHAT_POLICY_TTL, policy)
+        return policy
+
+    async def _emit_shared_chat(self, data, target, skip_sid, **kwargs):
+        """Send each viewer of a shared chat a copy limited to the users they may see."""
+        skipped = skip_sid if isinstance(skip_sid, (list, tuple, set)) else [skip_sid]
+        policies = {}
+        for sid in self._shared_chat_session_ids(data.get('chat_id'), target):
+            entry = SESSION_POOL.get(sid)
+            if sid in skipped or not entry or not entry.get('id'):
+                continue
+            user_id = entry['id']
+            if user_id not in policies:
+                policies[user_id] = await self._shared_chat_policy(entry)
+            if policies[user_id]:
+                _, visibility = policies[user_id]
+                await super().emit('events', sanitize_user_payload(data, visibility), to=sid, **kwargs)
 
 
 if WEBSOCKET_MANAGER == 'redis':
