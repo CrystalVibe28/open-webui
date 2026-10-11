@@ -10,19 +10,19 @@
 	import UserStatus from '$lib/components/channel/Messages/Message/UserStatus.svelte';
 	import UserStatusLinkPreview from '$lib/components/channel/Messages/Message/UserStatusLinkPreview.svelte';
 
-	const i18n = getContext('i18n');
+	const i18n = getContext<typeof import('$lib/i18n').default>('i18n');
 	const channelContext = getContext<Readable<string | null>>('channelId') ?? readable(null);
 
 	export let token: Token;
-	let openPreview = false;
 
 	let triggerChar = '';
 	let label = '';
 
 	let idType = null;
 	let id = '';
+	let openPreview = false;
 
-	$: if (token) {
+	$: if (token && $i18n && $models && $channels) {
 		init();
 	}
 

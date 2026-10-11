@@ -65,6 +65,7 @@ jobs:
             ${{ steps.meta.outputs.image }}:latest
           build-args: |
             BUILD_HASH=${{ github.sha }}
+            BUILD_CHANNEL=main
             USE_CUDA=false
             USE_OLLAMA=false
             USE_SLIM=false
