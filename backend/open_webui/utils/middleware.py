@@ -4225,9 +4225,23 @@ def get_model_context_usage_checkpoint(usage: dict | None, model_id: str | None)
         ):
             continue
 
+        output_tokens = 0
+        for output_key in ('completion_tokens', 'output_tokens', 'eval_count', 'predicted_n'):
+            value = usage.get(output_key)
+            if (
+                not isinstance(value, bool)
+                and isinstance(value, (int, float))
+                and (not isinstance(value, float) or math.isfinite(value))
+                and 0 <= value <= 9_007_199_254_740_991
+                and value == int(value)
+            ):
+                output_tokens = int(value)
+                break
+
         return {
             'model_id': model_id,
             'input_tokens': int(input_tokens),
+            'output_tokens': output_tokens,
         }
 
     return None
@@ -4409,6 +4423,7 @@ async def non_streaming_chat_response_handler(response, ctx):
                         response_output = previous + response_output
                         content = get_output_text(response_output)
 
+                    usage = normalize_usage(response_data.get('usage', {}) or {})
                     await event_emitter(
                         {
                             'type': 'chat:completion',
@@ -4417,13 +4432,12 @@ async def non_streaming_chat_response_handler(response, ctx):
                                 'done': True,
                                 'output': response_output,
                                 'title': title,
+                                **({'usage': usage} if usage else {}),
                             },
                         }
                     )
 
                     # Save message in the database
-                    usage = normalize_usage(response_data.get('usage', {}) or {})
-
                     if save_to_chat:
                         await Chats.upsert_message_to_chat_by_id_and_message_id(
                             metadata['chat_id'],

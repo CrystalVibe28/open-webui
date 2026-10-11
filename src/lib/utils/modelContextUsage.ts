@@ -1,6 +1,7 @@
 export type ModelContextUsage = {
 	modelId: string;
 	inputTokens: number;
+	outputTokens?: number;
 };
 
 type ModelContextUsageMessage = {
@@ -19,6 +20,7 @@ type ModelContextUsageMessage = {
 		model_context_usage?: {
 			model_id?: unknown;
 			input_tokens?: unknown;
+			output_tokens?: unknown;
 		};
 	};
 };
@@ -62,6 +64,20 @@ export const getLatestInputTokens = (usage: Record<string, unknown> | null | und
 	return null;
 };
 
+export const getLatestOutputTokens = (usage: Record<string, unknown> | null | undefined) => {
+	// Provider aliases describe the latest invocation; canonical fields may be cumulative.
+	for (const key of ['completion_tokens', 'output_tokens', 'eval_count', 'predicted_n']) {
+		const value = usage?.[key];
+		if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) {
+			return value;
+		}
+	}
+	return 0;
+};
+
+export const getModelContextUsedTokens = (usage: ModelContextUsage | null) =>
+	(usage?.inputTokens ?? 0) + getLatestOutputTokens({ output_tokens: usage?.outputTokens });
+
 export const countToolUsageItems = (output: unknown) =>
 	Array.isArray(output)
 		? output.filter(
@@ -87,7 +103,8 @@ export const findLatestModelContextUsage = (
 			typeof storedCheckpoint.input_tokens === 'number'
 				? {
 						modelId: storedCheckpoint.model_id,
-						inputTokens: storedCheckpoint.input_tokens
+						inputTokens: storedCheckpoint.input_tokens,
+						outputTokens: getLatestOutputTokens({ output_tokens: storedCheckpoint.output_tokens })
 					}
 				: null);
 		if (
@@ -113,7 +130,13 @@ export const findLatestModelContextUsage = (
 		}
 
 		const inputTokens = getLatestInputTokens(message?.usage ?? message?.info?.usage);
-		if (inputTokens) return { modelId, inputTokens };
+		if (inputTokens) {
+			return {
+				modelId,
+				inputTokens,
+				outputTokens: getLatestOutputTokens(message?.usage ?? message?.info?.usage)
+			};
+		}
 	}
 	return null;
 };

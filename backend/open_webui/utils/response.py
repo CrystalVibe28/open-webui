@@ -134,10 +134,10 @@ def merge_usage(current: dict | None, incoming: dict | None) -> dict:
         or incoming_usage.get('input_tokens')
         or current_usage.get('prompt_tokens', 0)
     )
+    # Zero is a valid latest output count; never carry output from an earlier call.
+    latest_output_tokens = incoming_usage.get('completion_tokens')
     result['completion_tokens'] = (
-        incoming_usage.get('completion_tokens')
-        or incoming_usage.get('output_tokens')
-        or current_usage.get('completion_tokens', 0)
+        latest_output_tokens if latest_output_tokens is not None else incoming_usage.get('output_tokens', 0)
     )
 
     return result
