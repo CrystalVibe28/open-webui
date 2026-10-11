@@ -57,7 +57,8 @@
 	let editScrollContainer: HTMLDivElement;
 
 	let message = structuredClone(history.messages[messageId]);
-	$: authorId = message.user_id || message.user?.id || user?.id;
+	// An empty user_id is a hidden author, not a missing one; it must not fall back to the owner.
+	$: authorId = message.user_id ?? message.user?.id ?? user?.id;
 	$: author =
 		message.user?.id === authorId
 			? message.user

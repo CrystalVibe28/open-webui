@@ -3,12 +3,37 @@ from dataclasses import dataclass
 from fastapi import HTTPException, status
 
 
+def is_open_channel(channel) -> bool:
+    """Open channels are read across groups, so their viewers do not share one visible set."""
+    from open_webui.models.access_grants import has_public_read_access_grant
+
+    if channel.type == 'dm':
+        return False
+    if channel.type == 'group' and channel.is_private is not None:
+        return channel.is_private is False
+    return has_public_read_access_grant(channel.access_grants)
+
+
+async def get_admin_ids(db=None) -> set[str]:
+    """Admins run the instance and own its shared models and tools, so every user sees them."""
+    from open_webui.internal.db import get_async_db_context
+    from open_webui.models.users import User
+    from sqlalchemy import select
+
+    async with get_async_db_context(db) as session:
+        return set((await session.execute(select(User.id).where(User.role == 'admin'))).scalars().all())
+
+
 @dataclass
 class UserVisibility:
     user_id: str
     user_ids: set[str] | None
     group_ids: set[str] | None
-    channel_scoped: bool = False
+
+    @classmethod
+    async def common(cls, user_id, db=None):
+        """The users every viewer sees, for content that is read across groups."""
+        return cls(user_id, await get_admin_ids(db), set())
 
     @classmethod
     async def load(cls, user, db=None):
@@ -19,7 +44,7 @@ class UserVisibility:
 
         groups = await Groups.get_groups_by_member_id(user.id, db=db)
         group_ids = {group.id for group in groups}
-        user_ids = {user.id}
+        user_ids = {user.id} | await get_admin_ids(db)
         if group_ids:
             memberships = await Groups.get_group_user_ids_by_ids(list(group_ids), db=db)
             user_ids.update(user_id for member_ids in memberships.values() for user_id in member_ids)
@@ -42,7 +67,7 @@ class UserVisibility:
         if self.user_ids is None:
             return self
 
-        from open_webui.models.access_grants import AccessGrants, has_public_read_access_grant
+        from open_webui.models.access_grants import AccessGrants
         from open_webui.models.channels import Channels
         from open_webui.models.config import Config
         from open_webui.utils.access_control import has_permission
@@ -55,14 +80,11 @@ class UserVisibility:
         if channel.type in {'group', 'dm'}:
             if not await Channels.is_user_channel_member(channel.id, self.user_id, db=db):
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-            if channel.type == 'group' and (
-                channel.is_private is False
-                or channel.is_private is None and has_public_read_access_grant(channel.access_grants)
-            ):
+            if is_open_channel(channel):
                 return self
             members = await Channels.get_members_by_channel_id(channel.id, db=db)
             user_ids = {member.user_id for member in members if member.is_active}
-            return UserVisibility(self.user_id, user_ids, self.group_ids, channel_scoped=True)
+            return UserVisibility(self.user_id, user_ids, self.group_ids)
 
         if not await AccessGrants.has_access(
             user_id=self.user_id,
@@ -74,21 +96,21 @@ class UserVisibility:
         ):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
 
-        if has_public_read_access_grant(channel.access_grants):
+        if is_open_channel(channel):
             return self
 
         users = await AccessGrants.get_users_with_access(
             resource_type='channel', resource_id=channel.id, permission='read', db=db
         )
+        # Admins can read every standard channel without a grant.
         return UserVisibility(
             self.user_id,
-            {user.id for user in users if user.role != 'pending'} | {channel.user_id},
+            {user.id for user in users if user.role != 'pending'} | {channel.user_id} | await get_admin_ids(db),
             self.group_ids,
-            channel_scoped=True,
         )
 
     def can_see(self, user_id: str) -> bool:
-        return self.user_ids is None or user_id in self.user_ids
+        return self.user_ids is None or isinstance(user_id, str) and user_id in self.user_ids
 
     def require_user(self, user_id: str) -> None:
         if not self.can_see(user_id):

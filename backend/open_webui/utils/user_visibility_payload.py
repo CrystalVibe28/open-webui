@@ -25,9 +25,12 @@ _USER_IDS = {
     'pinned_by',
     'invited_by',
 }
-_USER_LISTS = {'users', 'members', 'participants'}
+_USER_LISTS = {'users', 'members', 'participants', 'attendees'}
 # A tool may legitimately have a custom parameter named user_id or groups.
-_OPAQUE_FIELDS = {'params', 'valves', 'user_valves', 'settings', 'permissions', 'schema', 'spec'}
+_OPAQUE_FIELDS = {'params', 'valves', 'user_valves', 'settings', 'permissions', 'schema', 'spec', 'specs'}
+# Records the server embeds in a resource's otherwise arbitrary data/meta JSON:
+# message attachments, arena grants and legacy model knowledge.
+_EMBEDDED = {'data': ('files',), 'meta': ('access_grants', 'knowledge')}
 
 
 def sanitize_user_payload(data, visibility: UserVisibility):
@@ -48,6 +51,10 @@ def _user_object(value, visibility, hidden_owner=False):
         return None if hidden_owner else _walk(value, visibility)
     uid = value.get('user_id', value.get('id'))
     return _walk(value, visibility) if visibility.can_see(uid) else None
+
+
+def _is_grant(value):
+    return isinstance(value, dict) and 'principal_type' in value and 'principal_id' in value
 
 
 def _visible_grant(grant, visibility):
@@ -72,15 +79,23 @@ def _sharing_field(key, value, visibility):
         return [gid for gid in value if gid in visibility.group_ids]
     if key == 'access_grants' and isinstance(value, list):
         return [_walk(grant, visibility) for grant in value if _visible_grant(grant, visibility)]
+    if key == 'parent_group_id' and isinstance(value, str):
+        return value if value in visibility.group_ids else None
     return _walk(value, visibility)
 
 
 def _field(key, value, visibility, *, resource, hidden_owner):
     if resource and key in {'data', 'meta'}:
-        # Calendar/note/file metadata is arbitrary client JSON. Message file
-        # attachments are embedded resource records and retain identity checks.
-        if key == 'data' and isinstance(value, dict) and isinstance(value.get('files'), list):
-            return {**value, 'files': _walk(value['files'], visibility)}
+        # Calendar/note/file metadata is arbitrary client JSON; only the embedded
+        # resource records retain identity checks.
+        if isinstance(value, dict):
+            embedded = {
+                name: _sharing_field(name, value[name], visibility)
+                for name in _EMBEDDED[key]
+                if isinstance(value.get(name), list)
+            }
+            if embedded:
+                return {**value, **embedded}
         return value
     if key in _OPAQUE_FIELDS:
         return value
@@ -107,14 +122,17 @@ def _walk(value, visibility):
         value = _MENTION.sub(lambda m: m[0] if visibility.can_see(m[1]) else '@Unknown', value)
         return _AVATAR.sub(lambda m: m[0] if visibility.can_see(m[1]) else '/user.png', value)
     if isinstance(value, list):
-        return [_walk(item, visibility) for item in value]
+        # A bare list of grants has no access_grants key to mark it.
+        return [_walk(item, visibility) for item in value if not _is_grant(item) or _visible_grant(item, visibility)]
     if not isinstance(value, dict):
         return value
-    if 'id' in value and 'name' in value and value.get('role') in {'admin', 'user', 'pending'}:
+    # Values are type-checked because a JSON schema reuses these names for nested dicts.
+    role = value.get('role')
+    if 'id' in value and 'name' in value and isinstance(role, str) and role in {'admin', 'user', 'pending'}:
         if not visibility.can_see(value['id']):
             return None
     hidden_owner = any(
-        value.get(key) and not visibility.can_see(value[key])
+        isinstance(value.get(key), str) and value[key] and not visibility.can_see(value[key])
         for key in ('user_id', 'owner_id', 'owner_user_id', 'author_id')
     )
     result = {

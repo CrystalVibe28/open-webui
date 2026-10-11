@@ -47,6 +47,8 @@ from open_webui.utils.context_compaction import compact_chat_branch, get_chat_co
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.misc import get_message_list
 from open_webui.utils.models import get_all_models
+from open_webui.utils.user_visibility import UserVisibility
+from open_webui.utils.user_visibility_payload import sanitize_user_payload
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1035,7 +1037,7 @@ async def get_user_pinned_chats(
 CHAT_EXPORT_BATCH_SIZE = 100
 
 
-async def generate_chat_export_ndjson(user_id: str):
+async def generate_chat_export_ndjson(user):
     """
     Async generator that streams all user chats as NDJSON (one JSON object per line).
 
@@ -1043,10 +1045,13 @@ async def generate_chat_export_ndjson(user_id: str):
     entire duration, which is critical for SQLite environments.
     """
     skip = 0
+    # A stream bypasses UserVisibilityMiddleware; cloned and replied-to shared chats
+    # carry other users' identities in their messages.
+    visibility = await UserVisibility.load(user)
 
     while True:
         result = await Chats.get_chats_by_user_id(
-            user_id,
+            user.id,
             skip=skip,
             limit=CHAT_EXPORT_BATCH_SIZE,
             db=None,
@@ -1056,7 +1061,12 @@ async def generate_chat_export_ndjson(user_id: str):
 
         for chat in result.items:
             try:
-                yield ChatResponse.model_validate(chat, from_attributes=True).model_dump_json() + '\n'
+                response = ChatResponse.model_validate(chat, from_attributes=True)
+                if visibility.user_ids is None:
+                    yield response.model_dump_json() + '\n'
+                else:
+                    data = sanitize_user_payload(response.model_dump(mode='json'), visibility)
+                    yield JSONCodec.dumps(data, ensure_ascii=False) + '\n'
             except Exception as e:
                 log.exception(f'Error serializing chat {chat.id}: {e}')
 
@@ -1069,7 +1079,7 @@ async def generate_chat_export_ndjson(user_id: str):
 @router.get('/all')
 async def get_user_chats(user=Depends(get_verified_user)):
     return StreamingResponse(
-        generate_chat_export_ndjson(user.id),
+        generate_chat_export_ndjson(user),
         media_type='application/x-ndjson',
     )
 
