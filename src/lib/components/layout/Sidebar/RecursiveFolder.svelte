@@ -150,7 +150,7 @@
 		if (chats) {
 			chats = sortFolderChats(
 				chats.map((chat) =>
-					!chat.user_id || chat.user_id === $user?.id
+					chat.user_id == null || chat.user_id === $user?.id
 						? { ...chat, last_read_at: chat.updated_at }
 						: chat
 				)
@@ -399,7 +399,7 @@
 				if (chats) {
 					chats = sortFolderChats(
 						chats.map((chat) =>
-							!chat.user_id || chat.user_id === $user?.id
+							chat.user_id == null || chat.user_id === $user?.id
 								? { ...chat, last_read_at: chat.updated_at }
 								: chat
 						)
