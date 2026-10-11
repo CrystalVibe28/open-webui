@@ -46,7 +46,7 @@ from open_webui.socket.main import (
 from open_webui.utils.access_control import filter_allowed_access_grants, has_permission
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.channels import extract_mentions, replace_mentions
-from open_webui.utils.user_visibility import UserVisibility
+from open_webui.utils.user_visibility import UserVisibility, is_open_channel
 from open_webui.utils.user_visibility_payload import sanitize_user_payload
 from open_webui.utils.files import get_image_base64_from_file_id
 from open_webui.utils.models import (
@@ -147,7 +147,8 @@ async def require_channel_user_ids_visible(user, user_ids: list[str], group_ids:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.USER_NOT_FOUND)
 
     if group_ids:
-        group_users = await Groups.get_group_user_ids_by_ids(group_ids, db=db)
+        # Inviting a group also adds the members of its child groups.
+        group_users = await Groups.get_group_user_ids_by_ids(group_ids, db=db, include_inherited=True)
         if any(not visibility.can_see(user_id) for ids in group_users.values() for user_id in ids):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.USER_NOT_FOUND)
 
@@ -160,8 +161,6 @@ async def get_channel_visible_user_ids(channel: ChannelModel, user, db) -> Optio
     else:
         visibility = await visibility.for_channel(channel, db=db)
         audience_ids = await get_channel_member_user_ids(channel, db=db)
-        if user.role != 'admin' and not visibility.group_ids and audience_ids is None:
-            return []
     if visibility.user_ids is None:
         return audience_ids
     if audience_ids is None:
@@ -1078,6 +1077,15 @@ async def model_response_handler(request, channel, message, user, db=None):
 
     visibility = await UserVisibility.load(user, db=db)
     visibility = await visibility.for_channel(channel, db=db)
+    # The reply to an open channel is read outside the caller's groups, so the model
+    # is only given the names every reader of it can see.
+    if is_open_channel(channel):
+        visibility = await UserVisibility.common(user.id, db=db)
+    aliases = {}
+
+    def author_label(user_id, author=None):
+        return author.name if author else aliases.setdefault(user_id, f'User {len(aliases) + 1}')
+
     sanitized_content = sanitize_user_payload(message.content, visibility)
     mentions = extract_mentions(sanitized_content)
     message_content = replace_mentions(sanitized_content)
@@ -1161,7 +1169,7 @@ async def model_response_handler(request, channel, message, user, db=None):
                         message_model = MODELS.get(message_model_id, None)
                         username = message_model.get('name', message_model_id) if message_model else message_model_id
                     else:
-                        username = message_user.name if message_user else 'Unknown'
+                        username = author_label(thread_message.user_id, message_user)
 
                     thread_content = sanitize_user_payload(thread_message.content, visibility)
                     thread_history.append(f'{username}: {replace_mentions(thread_content)}')
@@ -1188,7 +1196,7 @@ async def model_response_handler(request, channel, message, user, db=None):
                     ),
                 }
 
-                content = f'{user.name if user else "User"}: {message_content}'
+                content = f'{author_label(user.id, user if visibility.can_see(user.id) else None)}: {message_content}'
                 if images:
                     content = [
                         {

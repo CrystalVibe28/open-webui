@@ -157,7 +157,7 @@ async def search_users(
         filter['query'] = query
 
     if visibility.user_ids is not None:
-        if (not visibility.group_ids and not visibility.channel_scoped) or not visibility.user_ids:
+        if not visibility.user_ids:
             return {'users': [], 'total': 0}
         filter['user_ids'] = list(visibility.user_ids)
 
@@ -179,7 +179,8 @@ async def search_users(
 async def get_user_groups(
     include_inherited: bool = False, user=Depends(get_verified_user), db: AsyncSession = Depends(get_async_session)
 ):
-    return await user_groups_response(user.id, include_inherited, db)
+    # Visibility follows direct membership; an inherited parent group is a foreign group.
+    return await user_groups_response(user.id, include_inherited and user.role == 'admin', db)
 
 
 ############################
