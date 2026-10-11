@@ -134,7 +134,7 @@ Every commit made in this fork must be reflected in this file. Do this as part o
 ### How to read the line ranges
 
 - Ranges are `git blame` attributions: the lines each commit **still owns** at the reference commit named in the section. They are current locations, not the hunks at commit time, and they drift with every upstream merge.
-- Patches merged into `crystalvibe28/main` are measured at `crystalvibe28/main @ f40492c92` (upstream base `v0.12.0`).
+- Patches merged into `crystalvibe28/main` are measured at `crystalvibe28/main @ 8d385a22e` (upstream base `v0.12.0`).
 - Patches that are **not merged** are measured at their own branch tip, which sits on a much older upstream base, so their numbers do not match `crystalvibe28/main`.
 - "merge `<hash>`" marks lines of the same patch that were re-resolved during an upstream merge and are now attributed to that merge commit.
 - To measure one file: `git blame --porcelain <ref> -- <path>`, then collect the final line numbers of the lines attributed to the commit.
@@ -142,17 +142,17 @@ Every commit made in this fork must be reflected in this file. Do this as part o
 
 ### Overview
 
-| #   | Patch                                  | Branch                                | In `crystalvibe28/main`      | Commits                                            |
-| --- | -------------------------------------- | ------------------------------------- | ---------------------------- | -------------------------------------------------- |
-| 1   | Preserve `reasoning_content` on replay | `feat/preserve-reasoning-content`     | No — obsolete, do not merge  | `12f510687`, `49ffac82e`                           |
-| 2   | Model context window metadata          | `feat/model-context-window`           | Yes                          | `d78a5cc29`, `685a7822e`, `6cdb1dfff`              |
-| 3   | Context window usage indicator         | `feat/context-window-usage-indicator` | Yes                          | `b8b0e4e6c`, `622272b51`                           |
-| 4   | Fork version suffix                    | `crystalvibe28/dev`                   | Yes                          | `ac7a62d95`, `f249ab0f4`                           |
-| 5   | GHCR-only image build workflow         | `crystalvibe28/main`                  | Yes                          | `808e1b4d5`, `036b4d6ba`                           |
-| 6   | Auto-scroll for streamed responses     | `crystalvibe28/fix`                   | Yes (partly superseded)      | `04846ab3b`                                        |
-| 7   | Analysis group stays active            | `crystalvibe28/fix`                   | Yes (superseded by upstream) | `f82017e24`                                        |
-| 8   | Group-based user visibility            | `feat/group-user-visibility`          | Yes                          | `3656be046`, `dae17c8ff`, `d8be77741`, `aef77fe61` |
-| 9   | PWA app shell revalidation             | `crystalvibe28/fix`                   | Yes                          | `5b67b4292`                                        |
+| #   | Patch                                  | Branch                                | In `crystalvibe28/main`      | Commits                                                                                                |
+| --- | -------------------------------------- | ------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------ |
+| 1   | Preserve `reasoning_content` on replay | `feat/preserve-reasoning-content`     | No — obsolete, do not merge  | `12f510687`, `49ffac82e`                                                                               |
+| 2   | Model context window metadata          | `feat/model-context-window`           | Yes                          | `d78a5cc29`, `685a7822e`, `6cdb1dfff`                                                                  |
+| 3   | Context window usage indicator         | `feat/context-window-usage-indicator` | Yes                          | `b8b0e4e6c`, `622272b51`                                                                               |
+| 4   | Fork version suffix                    | `crystalvibe28/dev`                   | Yes                          | `ac7a62d95`, `f249ab0f4`                                                                               |
+| 5   | GHCR-only image build workflow         | `crystalvibe28/main`                  | Yes                          | `808e1b4d5`, `036b4d6ba`                                                                               |
+| 6   | Auto-scroll for streamed responses     | `crystalvibe28/fix`                   | Yes (partly superseded)      | `04846ab3b`                                                                                            |
+| 7   | Analysis group stays active            | `crystalvibe28/fix`                   | Yes (superseded by upstream) | `f82017e24`                                                                                            |
+| 8   | Group-based user visibility            | `feat/group-user-visibility`          | Yes                          | `3656be046`, `dae17c8ff`, `d8be77741`, `aef77fe61`, `fdc4598d4`, `5297d1781`, `4ee44089c`, `6a03dd13d` |
+| 9   | PWA app shell revalidation             | `crystalvibe28/fix`                   | Yes                          | `5b67b4292`                                                                                            |
 
 ---
 
@@ -244,18 +244,18 @@ Every commit made in this fork must be reflected in this file. Do this as part o
 
 **Files and line ranges**
 
-`d78a5cc29` (at `crystalvibe28/main @ f40492c92`)
+`d78a5cc29` (at `crystalvibe28/main @ 8d385a22e`)
 
 - `backend/open_webui/models/models.py`: no surviving lines (the field line was rewritten by `6cdb1dfff`)
 - `src/lib/apis/index.ts`: 1788
 - `src/lib/components/workspace/Models/ModelEditor.svelte`: 169 (merge `cbd352c23`: 1251-1270, 1272-1273 — the Context Window input, rewritten as a row of upstream's redesigned settings grid, placed before the Tags row)
 - `src/lib/i18n/locales/*/translation.json` (63 files): key `Context Window` (zh-TW: `上下文窗口`)
 
-`685a7822e` (at `crystalvibe28/main @ f40492c92`)
+`685a7822e` (at `crystalvibe28/main @ 8d385a22e`)
 
 - `backend/open_webui/utils/models.py`: 90-112, 212, 232, 243-246, 307-315
 
-`6cdb1dfff` (at `crystalvibe28/main @ f40492c92`, merged by `0fb55dab3` on 2026-10-12)
+`6cdb1dfff` (at `crystalvibe28/main @ 8d385a22e`, merged by `0fb55dab3` on 2026-10-12)
 
 - `backend/open_webui/models/models.py`: 149, 158-171
 
@@ -296,7 +296,7 @@ Every commit made in this fork must be reflected in this file. Do this as part o
 
 **Files and line ranges**
 
-`b8b0e4e6c` (at `crystalvibe28/main @ f40492c92`)
+`b8b0e4e6c` (at `crystalvibe28/main @ 8d385a22e`)
 
 - `backend/open_webui/utils/middleware.py`: 10, 4249-4264, 4278-4280, 4282-4311, 4314, 4328-4338, 4490, 4494-4505, 4884-4890, 4947-4948, 4984-4985, 4999-5009, 5062-5063, 5224, 5263, 5285, 5330-5331, 5394, 6722, 6736-6738 (merge `ab859ad51`: 5284, 6731)
 - `src/lib/components/chat/Chat.svelte`: 74-77, 79-80, 473-477, 479-548, 550-555, 558-570, 576-581, 587-617, 620-629, 631-645, 648-650, 656-674, 1003-1004, 1146, 1724, 1753-1757, 1796, 2697, 2939, 3024-3028, 3512, 3566, 3574-3575, 4031, 4420, 4431, 4505, 4523, 4645-4646, 5248, 5310, 5406 (merge `ab859ad51`: 3086, 3089-3092)
@@ -308,7 +308,7 @@ Every commit made in this fork must be reflected in this file. Do this as part o
 - `src/lib/utils/modelContextUsage.test.ts`: 1-143 (new; shared with `622272b51`)
 - `src/lib/i18n/locales/*/translation.json` (63 files): keys `Context Window:`, `Used {{inputTokens}} / {{contextWindow}} tokens`, `Used {{usedPercent}}% ({{remainingPercent}}% remaining)`
 
-`622272b51` (at `crystalvibe28/main @ f40492c92`, merged by `06369d6fc` on 2026-10-12)
+`622272b51` (at `crystalvibe28/main @ 8d385a22e`, merged by `06369d6fc` on 2026-10-12)
 
 - `backend/open_webui/utils/middleware.py`: 4265-4277, 4281, 4465, 4474
 - `backend/open_webui/utils/response.py`: 137-138, 140
@@ -355,7 +355,7 @@ Every commit made in this fork must be reflected in this file. Do this as part o
 - `ac7a62d95` (2026-08-14) `chore(release): bump version to 0.11.0+crystalvibe28.1`
 - `f249ab0f4` (2026-08-14) `chore(release): bump version to 0.11.0+crystalvibe28.2`
 
-**Files and line ranges** (at `crystalvibe28/main @ f40492c92`)
+**Files and line ranges** (at `crystalvibe28/main @ 8d385a22e`)
 
 - `package.json`: 3
 - `package-lock.json`: 3, 9
@@ -391,7 +391,7 @@ Every commit made in this fork must be reflected in this file. Do this as part o
 - `808e1b4d5` (2026-08-29) `ci: simplify GHCR image build workflow`
 - `036b4d6ba` (2026-08-29) `ci: rename Docker image build workflow`
 
-**Files and line ranges** (at `crystalvibe28/main @ f40492c92`)
+**Files and line ranges** (at `crystalvibe28/main @ 8d385a22e`)
 
 `808e1b4d5`
 
@@ -439,7 +439,7 @@ Every commit made in this fork must be reflected in this file. Do this as part o
 
 - `04846ab3b` (2026-09-21) `fix(chat): restore auto-scroll for streamed responses`
 
-**Files and line ranges** (at `crystalvibe28/main @ f40492c92`)
+**Files and line ranges** (at `crystalvibe28/main @ 8d385a22e`)
 
 - `src/lib/components/chat/MessageInput.svelte`: 928
 - `src/lib/components/chat/chatScroll.test.ts`: 1-22, 24-35, 55-80 (new; merge `ec3b1c2c1`: 23, 36-54)
@@ -473,7 +473,7 @@ Every commit made in this fork must be reflected in this file. Do this as part o
 
 - `f82017e24` (2026-09-21) `fix(chat): keep analysis groups active during reasoning`
 
-**Files and line ranges** (at `crystalvibe28/main @ f40492c92`)
+**Files and line ranges** (at `crystalvibe28/main @ 8d385a22e`)
 
 - `src/lib/components/chat/Messages/Markdown/ConsecutiveDetailsGroup.svelte`: no surviving lines (replaced by upstream's implementation)
 - `src/lib/components/chat/Messages/Markdown/ConsecutiveDetailsGroup.test.ts`: 1-63 (new)
@@ -491,12 +491,13 @@ Every commit made in this fork must be reflected in this file. Do this as part o
 The rule, implemented by `UserVisibility` in `backend/open_webui/utils/user_visibility.py`. It is always on; there is no config flag.
 
 - Admins see everyone.
-- Other users see themselves plus every member of the groups they belong to. A user with no group sees nobody else, including admins.
+- Other users see themselves, every admin, and every member of the groups they belong to. A user with no group sees only the admins. (Until `5297d1781`, admins were hidden like anyone else and a user with no group saw nobody; changed on request on 2026-10-12, so that admin-owned workspace models, skills and tools keep their owner and admins can be reached.)
+- Pending accounts are as upstream: they cannot call any of the user endpoints. The one thing they can read is the admin contact on the pending screen (`/auths/admin/details`, only while `auth.admin.show` is on).
 - Group membership here means direct membership. Upstream's nested groups (`v0.12.0`) do not widen it: a member of a child group does not see the members of its parent groups (decided 2026-10-12, see the merge notes).
 - Inside a channel the visible set is replaced by a channel-scoped one:
   - DM and private group channels: the active channel members.
-  - Standard channels without a public read grant: the users with read access plus the channel owner.
-  - Public channels: the group-based rule above.
+  - Standard channels without a public read grant: the users with read access, the channel owner and the admins (who can read every standard channel).
+  - Public channels: the group-based rule above. `is_open_channel(channel)` is the single test for "public" used by `for_channel` and by the model reply handler.
 - Hidden users and foreign groups return 404 rather than 403.
 
 Enforcement happens at three layers:
@@ -518,6 +519,23 @@ Supporting changes:
 - Frontend: profile image, user info and active-status requests carry `channel_id`; components pass a `channelId` prop or context; null users are tolerated ("Unknown User", `/user.png`).
 - `dae17c8ff` fixes two problems found in testing. Public group channels no longer narrow the visible set, so same-group users can be mentioned there, and `MentionList.svelte` calls `searchUsers` (with `channel_id`) for every role. The group search in `models/groups.py` always applies the `member_id` filter, so the add-member dialog lists only groups the user belongs to.
 - `d8be77741`: in `sanitize_user_payload`, a user object without `id` or `user_id` is nulled when the record that holds it belongs to a hidden user (`_user_object(..., hidden_owner)`). This covers upstream's version history entries, which carry `user: {'name': …}` next to the entry's own `user_id`.
+- `fdc4598d4` — sanitiser and grant filter:
+  - Identity fields are only treated as such when their value is a string. A JSON schema that names a parameter `user_id`, `owner_id`, `author_id` or `role` used to raise `TypeError` (unhashable dict) and turn the whole response into a 500; tool `specs` are now also opaque.
+  - New fields: `parent_group_id` is nulled unless it is one of the viewer's groups; `attendees` is a user list, so a hidden attendee's row is dropped; a list of grant-shaped dicts (`principal_type` + `principal_id`) is filtered even without an `access_grants` key (`GET /chats/shared/{id}/access`).
+  - `_EMBEDDED`: inside a resource's otherwise opaque `data` / `meta`, `data.files`, `meta.access_grants` (an arena model with a DB override) and `meta.knowledge` are still sanitised.
+  - `filter_allowed_access_grants` returns `None` unchanged. `None` means "leave the grants alone"; with `existing_grants` set it used to fall through and raise.
+- `5297d1781` — scopes:
+  - `get_admin_ids()` and the admin rule above; `UserVisibility.common()` is the set every viewer shares (the admins). The `channel_scoped` flag is gone, as nothing returns an empty directory for "no group" any more.
+  - `GET /users/groups?include_inherited=true` ignores the flag for non-admins, so inherited parent groups are not listed.
+  - `require_channel_user_ids_visible` checks a group's members with `include_inherited=True`, because `Channels._collect_unique_user_ids` (upstream) adds the members of child groups too.
+  - `model_response_handler`: in an open channel the model gets real names only for the users in `UserVisibility.common()`. Everyone else is `User 1`, `User 2`, … (stable within the thread) and user mentions become `@Unknown`, because the reply is read by people outside the caller's groups. Private channels and DMs keep real names.
+- `4ee44089c`:
+  - `GET /chats/all` is an NDJSON stream, which the middleware does not buffer. `generate_chat_export_ndjson(user)` sanitises each chat for non-admins; a cloned shared chat, or one that others replied to, carries `user` / `user_id` on its messages.
+  - Calendar events: `_filter_event_attendees` in `routers/calendar.py` rejects (404) attendees the caller cannot see, on create and update, and re-appends attendees that are already on the event but hidden from the caller.
+- `6a03dd13d` — frontend, for the shapes the sanitiser produces:
+  - `UserMessage.svelte`: `authorId` uses `??`, so an empty `user_id` (hidden author) no longer falls back to the chat owner.
+  - `ChannelItem.svelte`: the sidebar DM avatar carries `channel_id`.
+  - `RecursiveFolder.svelte`: only a missing `user_id` marks a shared-folder chat as the viewer's own; an empty one does not.
 
 **Why**
 
@@ -527,6 +545,10 @@ Supporting changes:
 - `d8be77741` and `aef77fe61` close two paths that upstream `v0.12.0` opened and the patch did not cover, found while analysing that merge:
   - The version history of models, tools, skills and functions returned the author's name in a `user` object without an id, which the sanitiser passed through.
   - Shared chats with "Allow replies" send typing and reply events, with the acting user's id and name, to everyone who has the chat open. The socket server only sanitised channel, note and Yjs events. The HTTP responses for the same chats were already covered.
+- The last four commits come from a second audit of the whole patch on the `v0.12.0` base (2026-10-12). It found no way for a user to list or look up accounts outside their scope, but it did find:
+  - identity reaching a user outside the sanitiser: the chat export stream, the bare grant list of a shared chat, names repeated by a model in a public channel, calendar attendees, and three nested-group paths;
+  - faults caused by the patch itself: the 500 on tool lists and on updates that omit `access_grants`, and hidden authors shown as the chat owner.
+- The owner then restated the rule with admins visible to everyone, as long as normal use is not affected; see "What it changes".
 
 **Branch:** `feat/group-user-visibility`
 
@@ -536,23 +558,27 @@ Supporting changes:
 - `dae17c8ff` (2026-09-25) `fix: align channel mentions and group selection with visibility rules`
 - `d8be77741` (2026-10-12) `fix: hide version history authors outside the viewer's groups`
 - `aef77fe61` (2026-10-12) `fix: sanitize shared chat events for each viewer`
+- `fdc4598d4` (2026-10-12) `fix: harden the identity sanitizer and keep grants an update omits`
+- `5297d1781` (2026-10-12) `feat: show admins to every user and tighten group and channel scopes`
+- `4ee44089c` (2026-10-12) `fix: sanitize chat exports and validate calendar attendees`
+- `6a03dd13d` (2026-10-12) `fix: handle hidden users in shared chats, folders and DM avatars`
 
-**Files and line ranges** (at `crystalvibe28/main @ f40492c92`)
+**Files and line ranges** (at `crystalvibe28/main @ 8d385a22e`)
 
 `3656be046` — core
 
-- `backend/open_webui/utils/user_visibility.py`: 1-57, 63-104 (new)
+- `backend/open_webui/utils/user_visibility.py`: 1-5, 27-31, 37-46, 48-69, 71-82, 85-86, 88-98, 100-104, 106-107, 109-112, 114-126 (new)
 - `backend/open_webui/utils/user_visibility_middleware.py`: 1-98 (new)
-- `backend/open_webui/utils/user_visibility_payload.py`: 1-39, 41-46, 49-87, 89-130 (new)
-- `backend/open_webui/utils/access_control/__init__.py`: 231, 238, 258-300, 346-348
+- `backend/open_webui/utils/user_visibility_payload.py`: 1-27, 29, 34-42, 44-49, 52-55, 60-81, 84-88, 99-102, 104-124, 127-128, 132-134, 136-148 (new)
+- `backend/open_webui/utils/access_control/__init__.py`: 231, 259-301, 347-349
 - `backend/open_webui/main.py`: 221, 820-821
 - `backend/open_webui/socket/main.py`: 60-61, 105-121, 135-296, 340, 350, 366, 642-648, 681-682, 756, 789, 800, 834, 858, 900, 1094-1095, 1264 (merge `cbd352c23`: 678)
 - `backend/open_webui/tools/builtin.py`: 31, 1848-1854, 1880, 1882-1884, 1887-1891, 1930-1936, 1973-1975, 2000-2006, 2058-2067
 
 `3656be046` — routers
 
-- `backend/open_webui/routers/users.py`: 15, 17, 21, 23-24, 26, 49, 151, 159-163, 827-830, 832-835, 837-838, 841, 873-884, 888, 893, 895, 928-931, 933-934
-- `backend/open_webui/routers/channels.py`: 49-50, 137-177, 226, 241, 243, 251, 292-298, 357-359, 460-462, 470, 502-510, 604-606, 621, 624, 628-630, 713-714, 816, 1049-1053, 1064-1066, 1079-1083, 1150-1153, 1166-1167, 1262-1265, 1641-1644
+- `backend/open_webui/routers/users.py`: 15, 17, 21, 23-24, 26, 49, 151, 159, 161-163, 828-831, 833-836, 838-839, 842, 874-885, 889, 894, 896, 929-932, 934-935
+- `backend/open_webui/routers/channels.py`: 50, 137-149, 152-176, 225, 240, 242, 250, 291-297, 356-358, 459-461, 469, 501-509, 603-605, 620, 623, 627-629, 712-713, 815, 1048-1052, 1063-1065, 1078-1079, 1089-1091, 1158-1161, 1174-1175, 1270-1273, 1649-1652
 - `backend/open_webui/routers/knowledge.py`: 37, 51-52, 1188, 1265, 1338-1345, 1347
 - `backend/open_webui/routers/groups.py`: 33, 133-134
 - `backend/open_webui/routers/auths.py`: 1140-1146
@@ -561,8 +587,8 @@ Supporting changes:
 - `backend/open_webui/routers/prompts.py`: 298, 479
 - `backend/open_webui/routers/skills.py`: 384, 463
 - `backend/open_webui/routers/tools.py`: 673 (merge `cbd352c23`: 581)
-- `backend/open_webui/routers/calendar.py`: 436
-- `backend/open_webui/routers/chats.py`: 2159
+- `backend/open_webui/routers/calendar.py`: 454
+- `backend/open_webui/routers/chats.py`: 2169
 - `backend/open_webui/routers/folders.py`: 561
 
 `3656be046` — models
@@ -595,31 +621,58 @@ Supporting changes:
 
 - `backend/open_webui/models/groups.py`: 333-337
 - `backend/open_webui/routers/users.py`: 144, 150
-- `backend/open_webui/utils/user_visibility.py`: 58-62
+- `backend/open_webui/utils/user_visibility.py`: 84 (the rest was folded into `is_open_channel` by `5297d1781`)
 - `src/lib/apis/users/index.ts`: 202-203, 211
 - `src/lib/components/channel/MessageInput/MentionList.svelte`: 47, 62-74
 
 `d8be77741`
 
-- `backend/open_webui/utils/user_visibility_payload.py`: 40, 47-48, 88
+- `backend/open_webui/utils/user_visibility_payload.py`: 43, 50-51, 103
 
 `aef77fe61`
 
 - `backend/open_webui/socket/main.py`: 101-104, 122-134, 297-339
 
+`fdc4598d4`
+
+- `backend/open_webui/utils/user_visibility_payload.py`: 28, 30-33, 56-59, 82-83, 89-98, 125-126, 129-131, 135
+- `backend/open_webui/utils/access_control/__init__.py`: 238-239
+
+`5297d1781`
+
+- `backend/open_webui/utils/user_visibility.py`: 6-26, 32-36, 47, 70, 83, 87, 99, 105, 108, 113
+- `backend/open_webui/routers/users.py`: 160, 182-183
+- `backend/open_webui/routers/channels.py`: 49, 150-151, 1080-1088, 1172, 1199. It also removes the "no group, public channel" early return from `get_channel_visible_user_ids`.
+
+`4ee44089c`
+
+- `backend/open_webui/routers/chats.py`: 50-51, 1040, 1048-1050, 1054, 1064-1069, 1082
+- `backend/open_webui/routers/calendar.py`: 30, 84-95, 299-300, 356-358
+
+`6a03dd13d`
+
+- `src/lib/components/chat/Messages/UserMessage.svelte`: 60-61
+- `src/lib/components/layout/Sidebar/ChannelItem.svelte`: 120
+- `src/lib/components/layout/Sidebar/RecursiveFolder.svelte`: 153, 402
+
 **Merge notes**
 
-- This is the largest and most conflict-prone patch, and it has **no automated tests** (the tests written during development were removed before the commit). After every upstream merge, re-check by hand as a non-admin user: user search, mention lists, channel member lists, the add-member dialog and profile previews. Since `v0.12.0` also check a shared chat with "Allow replies" (typing line, sender names) and the version history of a shared model, tool or skill.
+- This is the largest and most conflict-prone patch, and it has **no automated tests** (the tests written during development were removed before the commit). After every upstream merge, re-check by hand as a non-admin user: user search, mention lists, channel member lists, the add-member dialog and profile previews. Since `v0.12.0` also check a shared chat with "Allow replies" (typing line, sender names) and the version history of a shared model, tool or skill. Since the 2026-10-12 audit also check: "Export All Chats" after cloning someone else's shared chat, `@model` in a public channel, the sidebar avatar of a DM with someone outside the viewer's groups, and the Tools page (it must not return 500).
+- The second-audit commits were checked by reading the code, by a throwaway script against `sanitize_user_payload` / `UserVisibility.load`, and by `npm run build`. They were not exercised against a running server.
 - Upstream code added later is not covered automatically:
   - A new endpoint or socket event that returns user data needs an explicit check. The sanitiser only recognises the field names listed above.
   - A new router that calls `filter_allowed_access_grants` must pass `existing_grants`.
+  - A response that is not `application/json` (NDJSON, SSE, a download) skips the middleware. The two that carry identities sanitise by hand: the chat export in `routers/chats.py` and the pending-file stream in `routers/knowledge.py`.
+  - A new input that takes user ids (like calendar `attendees`) needs its own `visibility.require_user` check; the grant filter only covers `access_grants`.
+- `model_response_handler` in `routers/channels.py` is upstream code with the fork's naming woven in (`author_label`, the `is_open_channel` switch, `visibility.filter_users`). If upstream rewrites how the thread history is built, re-apply all three, or a public-channel reply can name users its readers may not see. The chat completion it starts still runs as the caller, so a model system prompt that uses `{{USER_NAME}}` is outside this protection.
+- Known and left alone: the Overview graph labels user nodes with the viewer when the chat owner is hidden; workspace cards show "Deleted User" for a hidden author; `/api/usage` exposes the instance-wide active user count to every user unless `ENABLE_PUBLIC_ACTIVE_USERS_COUNT=false`; the channel typing event forwards client-supplied data.
 - `app.add_middleware(UserVisibilityMiddleware)` must stay registered before `CompressMiddleware`, so it sees uncompressed JSON.
 - Both `sio = socketio.AsyncServer(...)` constructors (Redis and non-Redis) must stay `PrivacyAsyncServer`. Since `v0.12.0` the Redis one picks its manager class through `WEBSOCKET_REDIS_ROOM_CHANNELS` (`AsyncRedisRoomChannelManager`). `PrivacyAsyncServer` with that manager has not been tested.
 - `SESSION_POOL` entries must be written by merging into the existing entry (`{**(SESSION_POOL.get(sid) or {}), **…}`) in `connect`, `user_join` and `heartbeat`. Upstream rebuilds the entry and keeps only `chat_ids`, which drops the `channel_ids` and `note_ids` that `PrivacyAsyncServer` uses to find recipients on other workers. These three spots conflicted in the `v0.12.0` merge; keep upstream's `token` in `save_session` and its `LOCAL_AUTHENTICATED_SIDS.add(sid)`.
 - `enter_room_for_users` uses upstream's permission loop (`028dab8f1`: users without the Channels permission do not join) with the fork's `get_session_ids_by_user_id` lookup and `remember_session_resource` call.
-- Nested groups (`v0.12.0`, `d4c561d9f`). Upstream's access checks count inherited membership (`include_inherited=True`), but this patch deliberately keeps direct membership (decided 2026-10-12): `UserVisibility.load`, `require_channel_user_ids_visible` and the unconditional `member_id` filter in `Groups.get_groups` all use it, so the sharing dialog, the grant filter and the sanitiser agree with each other. Nothing changes while no group has a parent. Once a parent group is used, the two rules differ: a user who reaches a standard channel only through an inherited grant gets 404 from the channel-scoped user endpoints and no realtime events for that channel, because `UserVisibility.for_channel` passes the direct `group_ids` to `AccessGrants.has_access`. Making visibility follow inheritance is a separate change on `feat/group-user-visibility`.
+- Nested groups (`v0.12.0`, `d4c561d9f`). Upstream's access checks count inherited membership (`include_inherited=True`), but this patch deliberately keeps direct membership (decided 2026-10-12): `UserVisibility.load`, the group check in `require_channel_user_ids_visible`, the unconditional `member_id` filter in `Groups.get_groups` and `GET /users/groups` all use it, so the sharing dialog, the grant filter and the sanitiser agree with each other. The one place that expands inheritance is the member check in `require_channel_user_ids_visible`, and only to refuse: inviting a parent group would add child-group members the caller cannot see. Nothing changes while no group has a parent. Once a parent group is used, the two rules differ: a user who reaches a standard channel only through an inherited grant gets 404 from the channel-scoped user endpoints and no realtime events for that channel, because `UserVisibility.for_channel` passes the direct `group_ids` to `AccessGrants.has_access`. Making visibility follow inheritance is a separate change on `feat/group-user-visibility`.
 - In `_update_tool` (`routers/tools.py`) the grant filter now runs only `if version_id is None:` (upstream does not change grants when a version is restored); `existing_grants=tools.access_grants` must stay in that call.
-- `MentionToken.svelte`: upstream now declares `let openPreview = false` itself. The `v0.12.0` merge left both declarations in place without a conflict, and only the frontend build caught it. Run `npm run build` after every merge.
+- `MentionToken.svelte`: upstream now declares `let openPreview = false` itself. The `v0.12.0` merge left both declarations in place without a conflict, and only the frontend build caught it. Run `npm run build` after every merge. On this machine the build runs out of memory in "rendering chunks" with Node's default heap; set `NODE_OPTIONS=--max-old-space-size=8192` first.
 - `UserStatus.svelte` was rewritten upstream in `v0.12.0` (local time, last seen). The fork keeps the `channelId` prop and the `channel_id` query on the profile image; the null-user fallback avatar in `channel/Messages/Message.svelte` follows upstream's avatar size.
 
 ---
@@ -643,7 +696,7 @@ Supporting changes:
 
 - `5b67b4292` (2026-09-26) `fix(pwa): revalidate app shell after deployment updates`
 
-**Files and line ranges** (at `crystalvibe28/main @ f40492c92`)
+**Files and line ranges** (at `crystalvibe28/main @ 8d385a22e`)
 
 - `backend/open_webui/utils/spa_static_files.py`: 1-23 (new)
 - `backend/tests/test_spa_static_files.py`: 1-58 (new)
