@@ -235,7 +235,8 @@ async def filter_allowed_access_grants(
     Checks if the user has the required permissions to grant access to a resource.
     Returns the filtered list of access grants if permissions are missing.
     """
-    if not access_grants and not existing_grants:
+    # None leaves the stored grants untouched, so there is nothing to validate or preserve.
+    if access_grants is None or not access_grants and not existing_grants:
         return access_grants
 
     if has_anyone_read_access_grant(access_grants) and (
