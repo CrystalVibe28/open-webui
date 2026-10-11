@@ -37,14 +37,15 @@ def sanitize_user_payload(data, visibility: UserVisibility):
     return _walk(data, visibility)
 
 
-def _user_object(value, visibility):
+def _user_object(value, visibility, hidden_owner=False):
     if not isinstance(value, dict):
         return _walk(value, visibility)
     # Models/webhooks are resource identities, not user accounts.
     if value.get('role') in {'model', 'webhook', 'assistant'}:
         return value.copy()
     if 'id' not in value and 'user_id' not in value:
-        return _walk(value, visibility)
+        # Version history entries carry only the author's name next to their own user_id.
+        return None if hidden_owner else _walk(value, visibility)
     uid = value.get('user_id', value.get('id'))
     return _walk(value, visibility) if visibility.can_see(uid) else None
 
@@ -84,7 +85,7 @@ def _field(key, value, visibility, *, resource, hidden_owner):
     if key in _OPAQUE_FIELDS:
         return value
     if key in _USER_OBJECTS:
-        return _user_object(value, visibility)
+        return _user_object(value, visibility, hidden_owner)
     if key in _USER_IDS and isinstance(value, str):
         return value if visibility.can_see(value) else ''
     if key == 'user_ids' and isinstance(value, list):
