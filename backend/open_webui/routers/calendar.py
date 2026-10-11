@@ -27,6 +27,7 @@ from open_webui.utils.access_control import filter_allowed_access_grants, has_pe
 from open_webui.utils.auth import get_verified_user
 from open_webui.utils.calendar import expand_recurring_event
 from open_webui.utils.recurrence import schedule_start_ns
+from open_webui.utils.user_visibility import UserVisibility
 
 log = logging.getLogger(__name__)
 
@@ -78,6 +79,18 @@ async def _check_calendar_access(calendar_id: str, user: UserModel, permission: 
     ):
         return cal
     raise HTTPException(status_code=403, detail='Access denied')
+
+
+async def _filter_event_attendees(user: UserModel, attendees: list[dict], existing=()) -> list[dict]:
+    """Reject invitations to users the caller cannot see. Attendees already on the
+    event that are hidden from the caller are kept, as they never reach the client."""
+    visibility = await UserVisibility.load(user)
+    if visibility.user_ids is None:
+        return attendees
+    for attendee in attendees:
+        visibility.require_user(attendee.get('user_id'))
+    hidden = [{'user_id': a.user_id, 'meta': a.meta} for a in existing if not visibility.can_see(a.user_id)]
+    return [*attendees, *hidden]
 
 
 ####################
@@ -283,6 +296,8 @@ async def get_events(
 async def create_event(request: Request, form_data: CalendarEventForm, user: UserModel = Depends(get_verified_user)):
     await check_calendar_permission(request, user)
     await _check_calendar_access(form_data.calendar_id, user, 'write')
+    if form_data.attendees:
+        form_data.attendees = await _filter_event_attendees(user, form_data.attendees)
     try:
         event = await CalendarEvents.insert_new_event(user.id, form_data)
     except ValueError as e:
@@ -337,6 +352,9 @@ async def update_event(
     # calendar alone is enough to inject an event into any other calendar.
     if form_data.calendar_id is not None and form_data.calendar_id != event.calendar_id:
         await _check_calendar_access(form_data.calendar_id, user, 'write')
+
+    if form_data.attendees is not None:
+        form_data.attendees = await _filter_event_attendees(user, form_data.attendees, event.attendees)
 
     try:
         updated = await CalendarEvents.update_event_by_id(event_id, form_data)
