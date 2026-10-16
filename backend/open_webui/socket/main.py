@@ -60,6 +60,7 @@ from open_webui.utils.misc import get_output_text
 from open_webui.utils.user_visibility import UserVisibility
 from open_webui.utils.user_visibility_payload import sanitize_user_payload
 from open_webui.utils.redis import (
+    build_sentinel_kwargs,
     build_sentinel_url,
     get_redis_connection,
     get_sentinels_from_env,
@@ -345,8 +346,16 @@ if WEBSOCKET_MANAGER == 'redis':
         if sentinel_hosts
         else WEBSOCKET_REDIS_URL
     )
+    ws_redis_options = (
+        {
+            'sentinel_kwargs': build_sentinel_kwargs(WEBSOCKET_REDIS_URL, WEBSOCKET_REDIS_OPTIONS),
+            **WEBSOCKET_REDIS_OPTIONS,
+        }
+        if sentinel_hosts
+        else WEBSOCKET_REDIS_OPTIONS
+    )
     manager_class = AsyncRedisRoomChannelManager if WEBSOCKET_REDIS_ROOM_CHANNELS else socketio.AsyncRedisManager
-    redis_manager = manager_class(ws_redis_url, redis_options=WEBSOCKET_REDIS_OPTIONS, json=SOCKETIO_JSON)
+    redis_manager = manager_class(ws_redis_url, redis_options=ws_redis_options, json=SOCKETIO_JSON)
     sio = PrivacyAsyncServer(
         cors_allowed_origins=SOCKETIO_CORS_ORIGINS,
         async_mode='asgi',

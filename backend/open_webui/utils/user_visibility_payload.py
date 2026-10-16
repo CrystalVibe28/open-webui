@@ -43,8 +43,8 @@ def sanitize_user_payload(data, visibility: UserVisibility):
 def _user_object(value, visibility, hidden_owner=False):
     if not isinstance(value, dict):
         return _walk(value, visibility)
-    # Models/webhooks are resource identities, not user accounts.
-    if value.get('role') in {'model', 'webhook', 'assistant'}:
+    # Models/webhooks/apps are resource identities, not user accounts.
+    if value.get('role') in {'model', 'webhook', 'assistant', 'app'}:
         return value.copy()
     if 'id' not in value and 'user_id' not in value:
         # Version history entries carry only the author's name next to their own user_id.
