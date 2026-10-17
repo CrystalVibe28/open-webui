@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { TerminalContext } from '$lib/types';
 	import { resolveLocalizedFunction } from '$lib/utils/localizedContent';
 	import { functions as localizedFunctions } from '$lib/stores';
 	import DOMPurify from 'dompurify';
@@ -156,6 +157,7 @@
 	export let statusHandler: Function = () => {};
 	export let forkHandler: Function = () => {};
 	export let chatId = '';
+	export let terminalContext: TerminalContext | null = null;
 	export let contextUsage = null;
 	export let modelContextUsage: ModelContextUsage | null = null;
 	export let contextCompactionEnabled = false;
@@ -232,7 +234,7 @@
 
 	let showTerminalMenu = false;
 
-	export let messageQueue: { id: string; prompt: string; files: any[] }[] = [];
+	export let messageQueue: { id: string; prompt: string; files: any[]; error?: string }[] = [];
 	export let onQueueSendNow: (id: string) => void = () => {};
 	export let onQueueEdit: (id: string) => void = () => {};
 	export let onQueueDelete: (id: string) => void = () => {};
@@ -1065,21 +1067,27 @@
 		files = [...files, fileItem];
 
 		if (filesystemUploadTerminal) {
+			fileItem.terminal_id = $selectedTerminalId;
+			fileItem.session_id = chatId || null;
 			try {
 				const cwd =
+					(terminalContext?.terminalId === $selectedTerminalId
+						? terminalContext?.currentDirectory
+						: null) ||
 					(
 						await getCwd(
 							filesystemUploadTerminal.url,
 							filesystemUploadTerminal.key,
-							chatId || undefined
+							fileItem.session_id || undefined
 						)
-					)?.cwd || '/';
+					)?.cwd;
+				if (!cwd) throw new Error($i18n.t('Could not determine the upload folder.'));
 				const uploadedFile = await uploadNewFileToTerminal(
 					filesystemUploadTerminal.url,
 					filesystemUploadTerminal.key,
 					cwd,
 					file,
-					chatId || undefined
+					fileItem.session_id || undefined
 				);
 
 				if (uploadedFile) {
@@ -1517,6 +1525,7 @@
 							files = [
 								...files,
 								{
+									...data,
 									type: 'filesystem',
 									id: path,
 									path,
@@ -1959,6 +1968,7 @@
 									<QueuedMessageItem
 										id={queuedMessage.id}
 										content={queuedMessage.prompt}
+										error={queuedMessage.error ?? ''}
 										files={queuedMessage.files}
 										onSendNow={onQueueSendNow}
 										onEdit={onQueueEdit}
@@ -2325,7 +2335,10 @@
 															}
 														}
 
-														if (e.key === 'Escape') {
+														if (
+															$settings?.keyboardShortcuts !== false &&
+															matchKeybinding(e) === Shortcut.CLEAR_INPUT_SELECTIONS
+														) {
 															console.log('Escape');
 															atSelectedModel = undefined;
 															selectedToolIds = [];

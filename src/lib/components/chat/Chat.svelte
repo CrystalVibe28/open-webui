@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { TerminalContext } from '$lib/types';
 	import { v4 as uuidv4 } from 'uuid';
 	import { toast } from 'svelte-sonner';
 
@@ -101,6 +102,7 @@
 		updateChatById,
 		updateChatFolderIdById
 	} from '$lib/apis/chats';
+	import type { FilesystemFile } from '$lib/apis/terminal';
 	import { generateOpenAIChatCompletion, getErrorMessage } from '$lib/apis/openai';
 	import { processUrl, processWebSearch } from '$lib/apis/retrieval';
 	import {
@@ -682,6 +684,21 @@
 	let prompt = '';
 	let chatFiles = [];
 	let files: any[] = [];
+	let terminalContext: TerminalContext | null = null;
+	const askFile = async (instruction: string, file: FilesystemFile) => {
+		const attachments = [structuredClone(file)];
+		const last = history.currentId ? history.messages[history.currentId] : null;
+		if (last?.role === 'assistant' && !last.done) {
+			chatRequestQueues.update((queues) => ({
+				...queues,
+				[$chatId]: [
+					...(queues[$chatId] ?? []),
+					{ id: uuidv4(), prompt: instruction, files: attachments }
+				]
+			}));
+		} else await submitPrompt(instruction, attachments);
+	};
+
 	let params = {};
 	let chatVariables = {};
 	let showChatVariablesModal = false;
@@ -1116,7 +1133,7 @@
 			await tick();
 			loading = false;
 			noteChatDebug('embedded chat loading false');
-			window.setTimeout(() => scrollToBottom(), 0);
+			if (!$page.url.searchParams.has('message')) window.setTimeout(() => scrollToBottom(), 0);
 
 			await tick();
 
@@ -1150,6 +1167,7 @@
 
 	const initEmbeddedDraft = async () => {
 		clearModelContextUsage();
+		terminalContext = null;
 		clearTimeout(saveControlsTimer);
 		await saveControls();
 
@@ -1274,15 +1292,18 @@
 
 	let lastTerminalSkillSelector: string | null = null;
 	$: if ($selectedTerminalId !== lastTerminalSkillSelector) {
+		terminalContext = null;
 		selectedSkillIds = selectedSkillIds.filter((id) => !id.startsWith('terminal:'));
 		terminalSkills.set([]);
 		lastTerminalSkillSelector = $selectedTerminalId;
 	}
 
-	let settingDefaults = false;
+	let settingDefaults: Promise<void> | null = null;
 	const setDefaults = async () => {
-		if (settingDefaults) return;
-		settingDefaults = true;
+		// Concurrent callers must wait, or the earlier run overwrites what they write afterwards
+		if (settingDefaults) return settingDefaults;
+		let resolveDefaults = () => {};
+		settingDefaults = new Promise<void>((resolve) => (resolveDefaults = resolve));
 
 		try {
 			if (!$tools) {
@@ -1425,9 +1446,22 @@
 				}
 			}
 		} finally {
-			settingDefaults = false;
+			settingDefaults = null;
+			resolveDefaults();
 		}
 	};
+
+	let revealedSearchMessage = '';
+	$: if (!embedded && !loading && messagesRef && chat && chat.id === $page.params.id) {
+		const target = $page.url.searchParams.get('message');
+		const key = `${chat.id}:${target}`;
+		if (target && history.messages[target] && key !== revealedSearchMessage) {
+			revealedSearchMessage = key;
+			autoScroll = false;
+			history.currentId = getDeepestChildId(history, target);
+			tick().then(() => messagesRef?.scrollToMessage(target));
+		} else if (!target) revealedSearchMessage = '';
+	}
 
 	const showMessage = async (message, scroll = true, save = true) => {
 		const _chatId = JSON.parse(JSON.stringify($chatId));
@@ -1460,7 +1494,16 @@
 		});
 	};
 
-	const terminalEventHandler = (type: string, data: any) => {
+	const terminalEventHandler = (type: string, data: any, message: any) => {
+		const attachment = history.messages[message?.parentId]?.files?.find(
+			(file: any) => file.type === 'filesystem'
+		);
+		if (attachment) {
+			if (attachment.terminal_id && attachment.terminal_id !== $selectedTerminalId) return;
+			if (type === 'terminal:display_file' && terminalContext?.file?.path === data.path)
+				showFileNavDir.set(data.path);
+			return;
+		}
 		if (type === 'terminal:display_file') {
 			if (!data?.path) return;
 			if ($settings?.terminalFileDisplay === 'inline') return;
@@ -1468,7 +1511,7 @@
 		} else if (type === 'terminal:write_file' || type === 'terminal:replace_file_content') {
 			if (!data?.path) return;
 			showFileNavDir.set(data.path);
-		} else if (type === 'terminal:run_command') {
+		} else if (type === 'terminal:run_command' && !terminalContext?.file) {
 			showFileNavDir.set('/');
 		}
 	};
@@ -1511,6 +1554,8 @@
 	};
 
 	let joinedChatId = '';
+	let liveParticipants: { id: string; name: string }[] = [];
+	const clearPresence = () => (liveParticipants = []);
 	let chatRefresh: { id: string; promise: Promise<void> } | null = null;
 	let typingUsers: { id: string; name: string }[] = [];
 	let typingUsersTimeout: Record<string, ReturnType<typeof setTimeout>> = {};
@@ -1549,7 +1594,17 @@
 	) => {
 		const currentId = history.currentId;
 		const next = incoming?.messages ?? {};
+		// An edited prompt adds a sibling; other viewers should keep their selected branch.
+		const hasNewBranch = Object.values(next).some(
+			(message: any) =>
+				message.role === 'user' &&
+				!history.messages[message.id] &&
+				Object.values(history.messages).some(
+					(existing: any) => existing.role === 'user' && existing.parentId === message.parentId
+				)
+		);
 		const follow =
+			!hasNewBranch &&
 			!generating &&
 			!(
 				taskIds?.length &&
@@ -1596,6 +1651,7 @@
 				mergeChatMessages(fresh.chat.history, baseline);
 			} catch (error) {
 				if ($chatId === id && joinedChatId === id) {
+					clearPresence();
 					chat = null;
 					history = { messages: {}, currentId: null };
 					if (!embedded) await goto('/');
@@ -1609,20 +1665,33 @@
 	};
 
 	const syncChatRoom = (socket: typeof $socket, id: string, temporary: boolean) => {
-		const next = socket && id && !temporary && !isTemporaryChatId(id) ? id : '';
+		const next = socket?.connected && id && !temporary && !isTemporaryChatId(id) ? id : '';
 		if (next === joinedChatId) return;
 		clearTyping();
-		if (joinedChatId)
-			socket?.emit('events:chat', { chat_id: joinedChatId, data: { type: 'leave' } });
+		clearPresence();
+		if (joinedChatId && socket?.connected)
+			socket.emit('events:chat', { chat_id: joinedChatId, data: { type: 'leave' } });
 		joinedChatId = next;
-		if (next)
-			socket?.emit('events:chat', { chat_id: next, data: { type: 'join' } }, () => {
-				if ($chatId === next) void refreshChat();
+		const connectionId = socket?.id;
+		if (next && socket)
+			socket.emit('events:chat', { chat_id: next, data: { type: 'join' } }, (accepted: boolean) => {
+				if (!socket.connected || socket.id !== connectionId || $chatId !== next) return;
+				if (!accepted) clearPresence();
+				// A refused join can mean access was lost; the refresh then sends the reader home.
+				void refreshChat();
 			});
 	};
 	$: syncChatRoom($socket, $chatId, $temporaryChatEnabled);
 
 	const chatEventHandler = async (event, cb) => {
+		if (event?.data?.type === 'chat:presence') {
+			if (!$socket?.connected || event.chat_id !== $chatId || event.chat_id !== joinedChatId)
+				return;
+			liveParticipants = (event.data.data?.users ?? []).filter(
+				(person: { id: string; name: string }) => person.id !== $user?.id
+			);
+			return;
+		}
 		console.log(event);
 		if (event?.data?.type === 'voice:play_animation') {
 			cb?.(
@@ -1935,7 +2004,7 @@
 					eventConfirmationInputType = data?.input?.type ?? data?.type ?? '';
 					eventConfirmationInputOptions = data?.input?.options ?? data?.options ?? [];
 				} else if (type.startsWith('terminal:')) {
-					terminalEventHandler(type, data);
+					terminalEventHandler(type, data, message);
 				} else {
 					console.log('Unknown message type', data);
 				}
@@ -2065,6 +2134,7 @@
 		$socket?.on('events', chatEventHandler);
 		$socket?.on('connect', handleSocketConnect);
 		$socket?.on('disconnect', clearTyping);
+		$socket?.on('disconnect', clearPresence);
 		$socket?.on('disconnect', cancelBrowserInteractions);
 
 		$audioQueue?.destroy();
@@ -2162,8 +2232,9 @@
 				// to the admin panel), otherwise the previously-viewed chat stays selected
 				// in the sidebar and deleting/archiving it wrongly navigates away.
 				clearTyping();
-				if (joinedChatId)
-					$socket?.emit('events:chat', { chat_id: joinedChatId, data: { type: 'leave' } });
+				clearPresence();
+				if (joinedChatId && $socket?.connected)
+					$socket.emit('events:chat', { chat_id: joinedChatId, data: { type: 'leave' } });
 				joinedChatId = '';
 				chatId.set('');
 				chatTitle.set('');
@@ -2172,6 +2243,7 @@
 				$socket?.off('events', chatEventHandler);
 				$socket?.off('connect', handleSocketConnect);
 				$socket?.off('disconnect', clearTyping);
+				$socket?.off('disconnect', clearPresence);
 				$socket?.off('disconnect', cancelBrowserInteractions);
 				dismissContextCompactionToast();
 				audioQueueInstance?.destroy();
@@ -2763,6 +2835,7 @@
 	};
 
 	const initNewChat = async () => {
+		if ($chatId) terminalContext = null;
 		cancelBrowserInteractions();
 		bridge?.end();
 		console.log('initNewChat');
@@ -2899,7 +2972,10 @@
 
 		// resetInput() must stay last: the selected model's defaults override the draft's selection.
 		await restoreChatInput(sessionStorage.getItem('chat-input'));
+		const previousChatId = $chatId;
 		await resetInput();
+		// A chat opened in the meantime keeps its id
+		if ($chatId !== previousChatId) return;
 		await chatId.set('');
 		await chatTitle.set('');
 
@@ -3007,6 +3083,7 @@
 	};
 
 	const loadChat = async () => {
+		if (chatIdProp && chatIdProp !== $chatId) terminalContext = null;
 		noteChatDebug('loadChat start');
 		clearModelContextUsage();
 		// chatIdProp is empty for chats started from the home page (URL set via replaceState)
@@ -3252,10 +3329,10 @@
 	let processingQueueChats = new Set<string>();
 
 	const processNextInQueue = async (targetChatId: string) => {
-		if (processingQueueChats.has(targetChatId)) return;
+		if (processingQueueChats.has(targetChatId) || targetChatId !== $chatId) return;
 
 		const queue = $chatRequestQueues[targetChatId];
-		if (!queue || queue.length === 0) return;
+		if (!queue || queue.length === 0 || queue[0].error) return;
 		const lastMessage = history.currentId ? history.messages[history.currentId] : null;
 		if (
 			(lastMessage && lastMessage.role === 'assistant' && !lastMessage.done) ||
@@ -3267,7 +3344,11 @@
 		}
 
 		processingQueueChats.add(targetChatId);
-		const queuedMessages = [...queue];
+		const boundary = queue.findIndex((entry) =>
+			entry.files.some((file: any) => file.type === 'filesystem')
+		);
+		const queuedMessages =
+			boundary === 0 ? queue.slice(0, 1) : boundary < 0 ? [...queue] : queue.slice(0, boundary);
 		const queuedMessageIds = new Set(queuedMessages.map((m) => m.id));
 		try {
 			const combinedPrompt = queuedMessages.map((m) => m.prompt).join('\n\n');
@@ -3283,7 +3364,10 @@
 			console.error(error);
 			chatRequestQueues.update((q) => ({
 				...q,
-				[targetChatId]: [...queuedMessages, ...(q[targetChatId] ?? [])]
+				[targetChatId]: [
+					...queuedMessages.map((entry) => ({ ...entry, error: String(error) })),
+					...(q[targetChatId] ?? [])
+				]
 			}));
 		} finally {
 			processingQueueChats.delete(targetChatId);
@@ -3309,6 +3393,12 @@
 			await stopResponse(false);
 			await tick();
 			await submitPrompt(item.prompt, item.files);
+		} catch (error) {
+			toast.error(String(error));
+			chatRequestQueues.update((q) => ({
+				...q,
+				[targetChatId]: [{ ...item, error: String(error) }, ...(q[targetChatId] ?? [])]
+			}));
 		} finally {
 			processingQueueChats.delete(targetChatId);
 			// Completion can arrive before submitPrompt returns, while the queue is locked.
@@ -3763,7 +3853,9 @@
 
 		saveSessionSelectedModels();
 
-		return await sendMessage(history, userMessageId, { modelId: bridgeRequest?.modelId ?? null });
+		return await sendMessage(history, userMessageId, {
+			modelId: bridgeRequest?.modelId ?? null
+		});
 	};
 
 	const handleManualCompact = async () => {
@@ -4047,7 +4139,11 @@
 		files = [];
 		messageInput?.setText('');
 
-		return (await submitPrompt(userPrompt, _files, bridgeRequest)) ?? { status: 'rejected' };
+		return (
+			(await submitPrompt(userPrompt, _files, bridgeRequest)) ?? {
+				status: 'rejected'
+			}
+		);
 	};
 
 	const sendMessage = async (
@@ -4065,6 +4161,21 @@
 			regenerationPrompt?: string | null;
 		} = {}
 	) => {
+		const parent = _history.messages[parentId];
+		if (parent?.files?.some((file: any) => file.type === 'filesystem')) {
+			const attached = parent.files.filter((file: any) => file.type === 'filesystem');
+			const terminal = attached.find((file: any) => file.terminal_id)?.terminal_id;
+			if (
+				attached.some(
+					(file: any) =>
+						(file.terminal_id && file.terminal_id !== terminal) ||
+						(file.session_id && file.session_id !== $chatId)
+				)
+			)
+				throw new Error('Attached files must belong to this chat and the same terminal.');
+			if (terminal && !isTerminalAvailable(terminal))
+				throw new Error('The attached file’s terminal is unavailable.');
+		}
 		if (autoScroll) {
 			scrollToBottom();
 		}
@@ -4284,6 +4395,10 @@
 	) => {
 		const responseMessage = _history.messages[responseMessageId];
 		const userMessage = _history.messages[responseMessage.parentId];
+		const filesystemAttachment = userMessage?.files?.find(
+			(file: any) => file.type === 'filesystem'
+		);
+		const requestTerminalId = filesystemAttachment?.terminal_id ?? $selectedTerminalId;
 
 		const chatMessageFiles = _messages
 			.filter((message) => message.files)
@@ -4411,8 +4526,8 @@
 			}
 		}
 
-		// Menu-selected skills are sent as IDs; inline <$skillId|label> mentions stay
-		// in the message so the backend can inject their full content.
+		// Menu-selected skills and inline <$skillId|label> mentions both load instructions.
+		// Keep mentions in the message so the backend can resolve them.
 		const skillIds = [...selectedSkillIds];
 
 		// Only send terminal_id if the model has terminal capability enabled
@@ -4446,7 +4561,7 @@
 						: $config?.features?.enable_tools
 				),
 				skill_ids: skillIds.length > 0 ? skillIds : undefined,
-				terminal_id: terminalEnabled && $selectedTerminalId ? $selectedTerminalId : undefined,
+				terminal_id: terminalEnabled && requestTerminalId ? requestTerminalId : undefined,
 				tool_servers: $config?.features?.enable_tool_servers
 					? [
 							...($toolServers ?? []).filter(
@@ -4455,7 +4570,10 @@
 							// Direct terminal servers — always included when enabled (not routed through selectedToolIds)
 							...(terminalEnabled
 								? ($terminalServers ?? [])
-										.filter((server) => !server.id)
+										.filter(
+											(server) =>
+												!server.id && (!filesystemAttachment || server.url === requestTerminalId)
+										)
 										.map((server) => ({ ...server, is_terminal: true }))
 								: [])
 						]
@@ -4533,6 +4651,8 @@
 			return null;
 		});
 
+		if (filesystemAttachment && (!res || res.error))
+			throw new Error('File request failed. Retry from the message or queue.');
 		if (res) {
 			if (res.error) {
 				await handleOpenAIError(res.error, responseMessage);
@@ -4551,9 +4671,25 @@
 						const { [_chatId]: pendingQueue, ...rest } = q;
 						return {
 							...rest,
-							[res.chat_id]: [...pendingQueue, ...(rest[res.chat_id] ?? [])]
+							[res.chat_id]: [
+								...pendingQueue.map((entry) => ({
+									...entry,
+									files: entry.files.map((file) =>
+										file.type === 'filesystem' && file.session_id == null
+											? { ...file, session_id: res.chat_id }
+											: file
+									)
+								})),
+								...(rest[res.chat_id] ?? [])
+							]
 						};
 					});
+					for (const file of userMessage?.files ?? [])
+						if (file.type === 'filesystem' && file.session_id == null)
+							file.session_id = res.chat_id;
+					for (const file of history.messages[userMessage.id]?.files ?? [])
+						if (file.type === 'filesystem' && file.session_id == null)
+							file.session_id = res.chat_id;
 					await chatId.set(res.chat_id);
 					if (!$temporaryChatEnabled && !embedded) {
 						// Carry the picks made on the new-chat page over to this chat
@@ -4718,12 +4854,12 @@
 		}
 	};
 
-	const continueResponse = async () => {
+	const continueResponse = async (message) => {
 		console.log('continueResponse');
 		const _chatId = JSON.parse(JSON.stringify($chatId));
 
-		if (history.currentId && history.messages[history.currentId].done == true) {
-			const responseMessage = history.messages[history.currentId];
+		if (history.messages[message.id].done == true) {
+			const responseMessage = history.messages[message.id];
 			beginModelContextUsage(responseMessage);
 			delete responseMessage.error;
 			responseMessage.done = false;
@@ -5235,6 +5371,7 @@
 						</div>
 					{:else}
 						<Navbar
+							{liveParticipants}
 							bind:this={navbarElement}
 							readOnly={isShared}
 							chat={{
@@ -5304,6 +5441,7 @@
 								id="messages-container"
 								bind:this={messagesContainerElement}
 								on:scroll={(e) => {
+									if (!messagesContainerElement) return;
 									autoScroll =
 										messagesContainerElement.scrollHeight - messagesContainerElement.scrollTop <=
 										messagesContainerElement.clientHeight + 5;
@@ -5366,6 +5504,7 @@
 									class=" pb-2 {dragged ? 'z-0' : 'z-10'}"
 								>
 									<MessageInput
+										{terminalContext}
 										{typingUsers}
 										on:typing={(event) => emitTyping(event.detail)}
 										callActive={!!(bridge?.connected || bridge?.connecting)}
@@ -5463,6 +5602,7 @@
 								{/if}
 								<div id={embedded ? messageInputDropzoneId : undefined} class="pb-2 z-10">
 									<MessageInput
+										{terminalContext}
 										{typingUsers}
 										on:typing={(event) => emitTyping(event.detail)}
 										callActive={!!(bridge?.connected || bridge?.connecting)}
@@ -5529,6 +5669,7 @@
 						{:else}
 							<div class="flex items-center h-full">
 								<Placeholder
+									{terminalContext}
 									callActive={!!(bridge?.connected || bridge?.connecting)}
 									callEnabled={!isShared}
 									bind:selectedModelIdx
@@ -5585,6 +5726,7 @@
 
 				{#if !embedded}
 					<ChatControls
+						bind:terminalContext
 						bind:history
 						bind:chatFiles
 						bind:params
@@ -5600,6 +5742,7 @@
 							return a;
 						}, [])}
 						submitPrompt={submitHandler}
+						onAskFile={askFile}
 						{stopResponse}
 						{bridge}
 						bind:callMode
