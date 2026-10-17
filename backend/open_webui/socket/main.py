@@ -121,12 +121,17 @@ class PrivacyAsyncServer(socketio.AsyncServer):
     ):
         # This exact invalidation signal contains no identities. New members
         # receive it in their user room before joining the new channel room.
-        # Shared chat events name the acting user; every other `events` payload goes to its owner.
+        # Shared chat events name the acting user, and presence lists every viewer;
+        # every other `events` payload goes to its owner.
         if (
             event == 'events'
             and isinstance(data, dict)
             and data.get('shared') is True
-            and (data.get('user_id') or data.get('user'))
+            and (
+                data.get('user_id')
+                or data.get('user')
+                or (isinstance(data.get('data'), dict) and data['data'].get('type') == 'chat:presence')
+            )
         ):
             if isinstance(to, (list, tuple, set)) or isinstance(room, (list, tuple, set)):
                 return
