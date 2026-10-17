@@ -3,7 +3,7 @@
 from typing import Literal
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from open_webui.internal.db import get_async_session
 from open_webui.models.access_grants import AccessGrant, AccessGrants
 from open_webui.models.channels import ChannelMember, Channels
@@ -17,6 +17,7 @@ from open_webui.models.shared_chats import SharedChat
 from open_webui.models.users import User
 from open_webui.utils.access_control import has_permission
 from open_webui.utils.auth import get_verified_user
+from open_webui.utils.user_visibility import UserVisibility
 from pydantic import BaseModel, Field
 from sqlalchemy import BigInteger, and_, case, cast, func, literal, or_, select, text, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -164,19 +165,33 @@ async def search_workspace(  # noqa: C901 — keep permission scoping and source
     channels = await Channels.get_channels_by_user_id(user.id, db=db) if 'message' in enabled else []
     channel_map = {c.id: c for c in channels}
     channel_names = {c.id: c.name for c in channels}
+    visibility = await UserVisibility.load(user, db=db)
+    channel_visibility = {}
+
+    async def visible_in(channel):
+        # The same channel-scoped set the channel endpoints apply to authors.
+        if channel.id not in channel_visibility:
+            try:
+                channel_visibility[channel.id] = await visibility.for_channel(channel, db=db)
+            except HTTPException:
+                channel_visibility[channel.id] = UserVisibility(user.id, set(), visibility.group_ids)
+        return channel_visibility[channel.id]
+
     direct_message_ids = [c.id for c in channels if c.type == 'dm' and not c.name]
     if direct_message_ids:
         members = (
             await db.execute(
-                select(ChannelMember.channel_id, User.name)
+                select(ChannelMember.channel_id, User.name, ChannelMember.is_active)
                 .join(User, User.id == ChannelMember.user_id)
                 .where(ChannelMember.channel_id.in_(direct_message_ids), User.id != user.id)
                 .order_by(User.name, User.id)
             )
         ).all()
         participants = {channel_id: [] for channel_id in direct_message_ids}
-        for channel_id, name in members:
-            participants[channel_id].append(name)
+        for channel_id, name, is_active in members:
+            # A DM shows its active members only, as UserVisibility.for_channel does.
+            if is_active or visibility.user_ids is None:
+                participants[channel_id].append(name)
         for channel_id, names in participants.items():
             channel_names[channel_id] = ', '.join(names) or user.name
     scopes = [SearchScope(id='folder:' + f.id, name=f.name, kind='folder') for f in folder_rows]
@@ -407,10 +422,13 @@ async def search_workspace(  # noqa: C901 — keep permission scoping and source
         else:
             channel = channel_map[item.channel_id]
             url = '/channels/' + channel.id + '?' + urlencode({'thread': item.parent_id or item.id, 'message': item.id})
+            author = row[1]
+            if author and item.user_id and not (await visible_in(channel)).can_see(item.user_id):
+                author = 'Unknown User'
             append_result(
                 'message:' + item.id,
                 'message',
-                row[1] or 'Message',
+                author or 'Message',
                 channel_names[channel.id] if channel.type == 'dm' else '#' + channel_names[channel.id],
                 item.content,
                 url,
