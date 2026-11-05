@@ -72,7 +72,10 @@ describe('response auto-scroll', () => {
 		const scrollTo = vi.fn();
 		const scroll = runInNewContext(
 			`${declarations('./MessageInput.svelte', ['scrollToBottom'])}\nscrollToBottom`,
-			{ document: { getElementById: () => ({ scrollHeight: 2000, scrollTo }) } }
+			{
+				messagesContainerId: 'messages-container',
+				document: { getElementById: () => ({ scrollHeight: 2000, scrollTo }) }
+			}
 		);
 		scroll();
 		expect(scrollTo).toHaveBeenCalledWith({ top: 2000, behavior: 'auto' });

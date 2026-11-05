@@ -9,6 +9,8 @@ from typing import Optional
 
 log = logging.getLogger(__name__)
 
+from open_webui.models.notifications import emit_changes
+from open_webui.models.comments import delete_resource_comments
 from open_webui.internal.db import Base, JSONField, get_async_db_context
 from open_webui.models.access_grants import AccessGrantModel, AccessGrants
 from open_webui.models.groups import Groups
@@ -57,9 +59,8 @@ class PromptModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)  # allows ORM model binding
 
 
-# --- form / schema definitions ---
+# Form / schema definitions
 # Forms
-####################
 
 
 class PromptUserResponse(PromptModel):
@@ -194,7 +195,7 @@ class PromptsTable:
             if match is None:
                 return
             return await self._to_prompt_model(match, db=session)
-        # --- context manager always returns above ---
+        # Context manager always returns above
         return
 
     async def get_prompts(self, db: AsyncSession | None = None) -> list[PromptUserResponse]:
@@ -443,11 +444,7 @@ class PromptsTable:
                 current_access_grants = await self._get_access_grants(prompt.id, db=session)
 
                 # Check if content changed to decide on history creation
-                content_changed = (
-                    prompt.name != form_data.name
-                    or prompt.content != form_data.content
-                    or form_data.access_grants is not None
-                )
+                content_changed = prompt.name != form_data.name or prompt.content != form_data.content
 
                 # Update prompt fields
                 prompt.name = form_data.name
@@ -455,10 +452,6 @@ class PromptsTable:
                 prompt.data = form_data.data or prompt.data
                 prompt.meta = form_data.meta or prompt.meta
                 prompt.updated_at = int(time.time())
-                if form_data.access_grants is not None:
-                    await AccessGrants.set_access_grants('prompt', prompt.id, form_data.access_grants, db=session)
-                    current_access_grants = await self._get_access_grants(prompt.id, db=session)
-
                 await session.commit()
 
                 # Create history entry only if content changed
@@ -513,7 +506,6 @@ class PromptsTable:
                     prompt.name != form_data.name
                     or prompt.command != form_data.command
                     or prompt.content != form_data.content
-                    or form_data.access_grants is not None
                     or (form_data.tags is not None and prompt.tags != form_data.tags)
                 )
 
@@ -528,10 +520,6 @@ class PromptsTable:
 
                     if form_data.tags is not None:
                         prompt.tags = form_data.tags
-
-                if form_data.access_grants is not None:
-                    await AccessGrants.set_access_grants('prompt', prompt.id, form_data.access_grants, db=session)
-                    current_access_grants = await self._get_access_grants(prompt.id, db=session)
 
                 prompt.updated_at = int(time.time())
 
@@ -666,8 +654,10 @@ class PromptsTable:
                     await PromptHistories.delete_history_by_prompt_id(prompt.id, db=session)
                     await AccessGrants.revoke_all_access('prompt', prompt.id, db=session)
 
+                    recipients = await delete_resource_comments('prompt', [prompt.id], db=session)
                     await session.delete(prompt)
                     await session.commit()
+                    await emit_changes(recipients)
                     return True
                 return False
         except Exception:
@@ -683,8 +673,10 @@ class PromptsTable:
                     await PromptHistories.delete_history_by_prompt_id(prompt.id, db=session)
                     await AccessGrants.revoke_all_access('prompt', prompt.id, db=session)
 
+                    recipients = await delete_resource_comments('prompt', [prompt.id], db=session)
                     await session.delete(prompt)
                     await session.commit()
+                    await emit_changes(recipients)
                     return True
                 return False
         except Exception as err:

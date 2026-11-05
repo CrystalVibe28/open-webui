@@ -2,14 +2,11 @@ import logging
 from copy import deepcopy
 from typing import Any
 
+from fastapi import HTTPException
 from open_webui.config import DEFAULT_USER_PERMISSIONS
 from open_webui.models.access_grants import (
-    has_anyone_read_access_grant,
-    has_public_read_access_grant,
-    has_public_write_access_grant,
-    has_user_access_grant,
+    normalize_access_grants,
     strip_anyone_access_grants,
-    strip_user_access_grants,
 )
 from open_webui.models.groups import Groups
 from open_webui.models.users import UserModel
@@ -218,133 +215,177 @@ def migrate_access_control(data: dict, ac_key: str = 'access_control', grants_ke
     data.pop(ac_key, None)
 
 
+# General sharing, all authenticated users, and anonymous readers, respectively.
+_SHARING_PERMISSION_KEYS = {
+    'model': ('sharing.models', 'sharing.public_models', None),
+    'knowledge': ('sharing.knowledge', 'sharing.public_knowledge', None),
+    'prompt': ('sharing.prompts', 'sharing.public_prompts', None),
+    'tool': ('sharing.tools', 'sharing.public_tools', None),
+    'skill': ('sharing.skills', 'sharing.public_skills', None),
+    'note': ('sharing.notes', 'sharing.public_notes', None),
+    'folder': ('sharing.folders', None, None),
+    'channel': (None, 'sharing.public_channels', None),
+    'calendar': (None, 'sharing.public_calendars', None),
+    'shared_chat': (None, 'sharing.public_chats', 'sharing.open_chats'),
+}
+
+
+async def _filter_access_grants_by_policy(
+    default_permissions: dict[str, Any],
+    user_id: str,
+    user_role: str,
+    access_grants: list | None,
+    resource_type: str,
+    *,
+    db: AsyncSession | None = None,
+) -> list | None:
+    """Filter initial sharing by the resource policy when creating an item."""
+    if resource_type not in _SHARING_PERMISSION_KEYS:
+        raise ValueError(f'Unsupported sharing resource type: {resource_type}')
+    sharing_permission_key, public_permission_key, anyone_permission_key = _SHARING_PERMISSION_KEYS[resource_type]
+
+    if not access_grants:
+        return access_grants
+
+    access_grants = normalize_access_grants(access_grants)
+    # Unsupported audiences are forbidden even for admins.
+    if anyone_permission_key is None:
+        access_grants = strip_anyone_access_grants(access_grants)
+    if public_permission_key is None:
+        access_grants = [
+            grant for grant in access_grants if (grant['principal_type'], grant['principal_id']) != ('user', '*')
+        ]
+
+    if user_role == 'admin' or not access_grants:
+        return access_grants
+
+    permissions = await get_permissions(user_id, default_permissions, db=db)
+
+    def allowed(key: str | None) -> bool:
+        if key is None:
+            return False
+        section, name = key.split('.')
+        return bool(permissions.get(section, {}).get(name, False))
+
+    if sharing_permission_key and not allowed(sharing_permission_key):
+        return []
+
+    allowed_audiences = {
+        'anyone': allowed(anyone_permission_key),
+        'public': allowed(public_permission_key),
+        'user': allowed('access_grants.allow_users'),
+        'group': allowed('access_grants.allow_groups'),
+    }
+    return [
+        grant
+        for grant in access_grants
+        if allowed_audiences[
+            'public' if (grant['principal_type'], grant['principal_id']) == ('user', '*') else grant['principal_type']
+        ]
+    ]
+
+
+def _grant_key(grant: dict) -> tuple:
+    return (grant['principal_type'], grant['principal_id'], grant['permission'])
+
+
+async def separate_hidden_access_grants(
+    user_id: str,
+    user_role: str,
+    access_grants: list | None,
+    existing_grants: list | None = None,
+    *,
+    db: AsyncSession | None = None,
+) -> tuple[list, list]:
+    """Check grant recipients against the caller's user visibility.
+
+    A non-admin may only name users and groups they can see; anything else is a 404.
+    Stored grants the caller cannot see never reach the client, so an update would drop
+    them: they are taken out of the caller's list here and returned separately, to be
+    re-added unchanged. Returns (the caller's grants, the hidden stored grants)."""
+    access_grants = normalize_access_grants(access_grants)
+    if user_role != 'user':
+        return access_grants, []
+
+    from open_webui.models.users import Users
+    from open_webui.utils.user_visibility import UserVisibility
+
+    viewer = await Users.get_user_by_id(user_id, db=db)
+    visibility = await UserVisibility.load(viewer, db=db)
+
+    def is_hidden(grant: dict) -> bool:
+        if grant['principal_type'] == 'user':
+            return grant['principal_id'] != '*' and not visibility.can_see(grant['principal_id'])
+        if grant['principal_type'] == 'group':
+            return grant['principal_id'] not in visibility.group_ids
+        return False
+
+    hidden_existing = {
+        _grant_key(grant): grant for grant in normalize_access_grants(existing_grants) if is_hidden(grant)
+    }
+
+    # Validate recipients before permission-based filtering. Dropping an invalid
+    # principal here could replace an existing ACL with a narrower or empty one.
+    for grant in access_grants:
+        if is_hidden(grant) and _grant_key(grant) not in hidden_existing:
+            if grant['principal_type'] == 'user':
+                visibility.require_user(grant['principal_id'])
+            else:
+                visibility.require_group(grant['principal_id'])
+
+    visible = [grant for grant in access_grants if _grant_key(grant) not in hidden_existing]
+    return visible, list(hidden_existing.values())
+
+
 async def filter_allowed_access_grants(
     default_permissions: dict[str, Any],
     user_id: str,
     user_role: str,
+    access_grants: list | None,
+    resource_type: str,
+    *,
+    existing_grants: list | None = None,
+    db: AsyncSession | None = None,
+) -> list | None:
+    """Filter initial sharing by the resource policy when creating an item.
+
+    Recipients must be visible to a non-admin caller, and stored grants hidden from the
+    caller (``existing_grants``) are kept; see separate_hidden_access_grants."""
+    if access_grants is None:
+        return await _filter_access_grants_by_policy(
+            default_permissions, user_id, user_role, access_grants, resource_type, db=db
+        )
+    access_grants, hidden_grants = await separate_hidden_access_grants(
+        user_id, user_role, access_grants, existing_grants, db=db
+    )
+    allowed = await _filter_access_grants_by_policy(
+        default_permissions, user_id, user_role, access_grants, resource_type, db=db
+    )
+    return [*allowed, *hidden_grants]
+
+
+async def validate_access_grants(
+    default_permissions: dict[str, Any],
+    user_id: str,
+    user_role: str,
     access_grants: list,
-    public_permission_key: str,
-    anyone_permission_key: str | None = None,
+    resource_type: str,
+    *,
     existing_grants: list | None = None,
     db: AsyncSession | None = None,
 ) -> list:
-    """
-    Checks if the user has the required permissions to grant access to a resource.
-    Returns the filtered list of access grants if permissions are missing.
-    """
-    # None leaves the stored grants untouched, so there is nothing to validate or preserve.
-    if access_grants is None or not access_grants and not existing_grants:
-        return access_grants
+    """Reject unauthorized sharing changes before replacing any stored grants.
 
-    if has_anyone_read_access_grant(access_grants) and (
-        not anyone_permission_key
-        or (
-            user_role != 'admin'
-            and not await has_permission(
-                user_id,
-                anyone_permission_key,
-                default_permissions,
-                db=db,
-            )
-        )
-    ):
-        access_grants = strip_anyone_access_grants(access_grants)
-
-    if user_role == 'admin':
-        return access_grants
-
-    # Validate recipients before permission-based filtering. Dropping an invalid
-    # principal here could replace an existing ACL with a narrower or empty one.
-    if user_role == 'user':
-        from open_webui.models.users import Users
-        from open_webui.utils.user_visibility import UserVisibility
-
-        viewer = await Users.get_user_by_id(user_id, db=db)
-        visibility = await UserVisibility.load(viewer, db=db)
-        hidden_existing = {}
-        for grant in existing_grants or []:
-            principal_type = grant.get('principal_type') if isinstance(grant, dict) else getattr(grant, 'principal_type', None)
-            principal_id = grant.get('principal_id') if isinstance(grant, dict) else getattr(grant, 'principal_id', None)
-            permission = grant.get('permission') if isinstance(grant, dict) else getattr(grant, 'permission', None)
-            hidden = (
-                principal_type == 'user' and principal_id != '*' and not visibility.can_see(principal_id)
-            ) or (principal_type == 'group' and principal_id not in visibility.group_ids)
-            if hidden:
-                hidden_existing[(principal_type, principal_id, permission)] = grant
-
-        for grant in access_grants:
-            principal_type = grant.get('principal_type') if isinstance(grant, dict) else getattr(grant, 'principal_type', None)
-            principal_id = grant.get('principal_id') if isinstance(grant, dict) else getattr(grant, 'principal_id', None)
-            permission = grant.get('permission') if isinstance(grant, dict) else getattr(grant, 'permission', None)
-            if principal_type == 'user' and principal_id != '*':
-                if not visibility.can_see(principal_id) and (principal_type, principal_id, permission) not in hidden_existing:
-                    visibility.require_user(principal_id)
-            elif principal_type == 'group':
-                if principal_id not in visibility.group_ids and (principal_type, principal_id, permission) not in hidden_existing:
-                    visibility.require_group(principal_id)
-
-        # Hidden legacy grants are removed from caller input, validated above,
-        # and re-added unchanged after permission filtering below.
-        access_grants = [
-            grant
-            for grant in access_grants
-            if (
-                grant.get('principal_type') if isinstance(grant, dict) else getattr(grant, 'principal_type', None),
-                grant.get('principal_id') if isinstance(grant, dict) else getattr(grant, 'principal_id', None),
-                grant.get('permission') if isinstance(grant, dict) else getattr(grant, 'permission', None),
-            )
-            not in hidden_existing
-        ]
-
-    # Check if user can share publicly
-    if (
-        has_public_read_access_grant(access_grants) or has_public_write_access_grant(access_grants)
-    ) and not await has_permission(
-        user_id,
-        public_permission_key,
-        default_permissions,
-        db=db,
-    ):
-        access_grants = [
-            grant
-            for grant in access_grants
-            if not (
-                (grant.get('principal_type') if isinstance(grant, dict) else getattr(grant, 'principal_type', None))
-                == 'user'
-                and (grant.get('principal_id') if isinstance(grant, dict) else getattr(grant, 'principal_id', None))
-                == '*'
-            )
-        ]
-
-    # Strip individual user sharing if user lacks permission
-    if has_user_access_grant(access_grants) and not await has_permission(
-        user_id,
-        'access_grants.allow_users',
-        default_permissions,
-        db=db,
-    ):
-        access_grants = strip_user_access_grants(access_grants)
-
-    if any(
-        (grant.get('principal_type') if isinstance(grant, dict) else getattr(grant, 'principal_type', None)) == 'group'
-        for grant in access_grants
-    ) and not await has_permission(
-        user_id,
-        'access_grants.allow_groups',
-        default_permissions,
-        db=db,
-    ):
-        access_grants = [
-            grant
-            for grant in access_grants
-            if (grant.get('principal_type') if isinstance(grant, dict) else getattr(grant, 'principal_type', None))
-            != 'group'
-        ]
-
-    if user_role == 'user':
-        access_grants.extend(hidden_existing.values())
-
-    return access_grants
+    Hidden stored grants (``existing_grants``) are kept as in filter_allowed_access_grants."""
+    grants, hidden_grants = await separate_hidden_access_grants(
+        user_id, user_role, access_grants, existing_grants, db=db
+    )
+    allowed = await _filter_access_grants_by_policy(
+        default_permissions, user_id, user_role, grants, resource_type, db=db
+    )
+    if len(allowed) != len(grants):
+        raise HTTPException(403, 'You do not have permission to share with the requested audience')
+    return [*allowed, *hidden_grants]
 
 
 async def has_base_model_access(

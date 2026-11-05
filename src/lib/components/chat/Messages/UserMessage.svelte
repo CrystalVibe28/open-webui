@@ -1,10 +1,12 @@
 <script lang="ts">
+	import { commentSurface, contentHash } from '$lib/components/comments/anchors';
 	import EditPencilIcon from '$lib/components/layout/Sidebar/icons/EditPencil.svelte';
 	import CopyIcon from '$lib/components/layout/Sidebar/icons/Copy.svelte';
 	import TrashIcon from '$lib/components/layout/Sidebar/icons/Trash.svelte';
 	import ChevronRightIcon from '$lib/components/layout/Sidebar/icons/ChevronRight.svelte';
 	import { toast } from 'svelte-sonner';
 	import { tick, getContext, onMount } from 'svelte';
+	import type { Writable } from 'svelte/store';
 
 	import { models, settings } from '$lib/stores';
 	import { user as _user } from '$lib/stores';
@@ -18,6 +20,7 @@
 	import equal from 'fast-deep-equal';
 
 	import Name from './Name.svelte';
+	import ContextCompactionLabel from './ContextCompactionLabel.svelte';
 	import ProfileImage from './ProfileImage.svelte';
 	import ProfilePreview from '$lib/components/channel/Messages/Message/ProfilePreview.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
@@ -28,6 +31,8 @@
 	import SubagentResultRow from './SubagentResultRow.svelte';
 
 	const i18n = getContext<typeof import('$lib/i18n').default>('i18n');
+	const contextCompactions =
+		getContext<Writable<Record<string, 'in_progress' | { error: string }>>>('contextCompactions');
 	export let user;
 
 	export let chatId;
@@ -196,6 +201,14 @@
 			</div>
 		{/if}
 
+		{#if message.contextSummary || $contextCompactions?.[messageId]}
+			<ContextCompactionLabel
+				summary={message.contextSummary}
+				status={$contextCompactions?.[messageId]}
+				{compactPreview}
+			/>
+		{/if}
+
 		<div class="chat-{message.role} w-full min-w-full">
 			{#if edit !== true}
 				{#if message.files}
@@ -304,6 +317,7 @@
 
 					<div class="max-h-96 overflow-auto" bind:this={editScrollContainer}>
 						<textarea
+							aria-label={$i18n.t('Message')}
 							id="message-edit-{message.id}"
 							bind:this={messageEditTextAreaElement}
 							class=" bg-transparent outline-hidden focus-visible:outline-none! w-full resize-none text-[0.9375rem]"
@@ -424,7 +438,18 @@
 						>
 							{#if message.content}
 								{#if $settings?.renderMarkdownInUserMessages ?? true}
-									<div class="markdown-prose">
+									<div
+										class="markdown-prose"
+										use:commentSurface={{
+											resource_type: 'chat',
+											resource_id: chatId,
+											target_type: 'chat_message',
+											target_id: message.id,
+											surface_id: 'content',
+											content_hash: contentHash(message.content ?? ''),
+											enabled: !!chatId
+										}}
+									>
 										<Markdown
 											id={`${chatId}-${message.id}`}
 											content={message.content}
@@ -435,6 +460,15 @@
 								{:else}
 									<div
 										class="whitespace-pre-wrap text-[0.9375rem]"
+										use:commentSurface={{
+											resource_type: 'chat',
+											resource_id: chatId,
+											target_type: 'chat_message',
+											target_id: message.id,
+											surface_id: 'content',
+											content_hash: contentHash(message.content ?? ''),
+											enabled: !!chatId
+										}}
 										dir={$settings?.chatDirection ?? 'auto'}
 									>
 										{message.content}
@@ -494,6 +528,7 @@
 										class="text-sm flex justify-center font-normal self-center dark:text-gray-500 min-w-fit"
 									>
 										<input
+											aria-label={$i18n.t('Message number')}
 											id="message-index-input-{message.id}"
 											type="number"
 											value={siblings.indexOf(message.id) + 1}
@@ -546,7 +581,7 @@
 							</div>
 						{/if}
 					{/if}
-					{#if !compactPreview && (!readOnly || (shareMode === 'continue' && ($_user?.role === 'admin' || ($_user?.permissions?.chat?.edit ?? true))))}
+					{#if !compactPreview && (!readOnly || shareMode === 'continue') && ($_user?.role === 'admin' || ($_user?.permissions?.chat?.edit ?? true))}
 						<Tooltip content={$i18n.t('Edit')} placement="bottom">
 							<button
 								class="{($settings?.highContrastMode ?? false)
@@ -618,6 +653,7 @@
 										class="text-sm flex justify-center font-normal self-center dark:text-gray-500 min-w-fit"
 									>
 										<input
+											aria-label={$i18n.t('Message number')}
 											id="message-index-input-{message.id}"
 											type="number"
 											value={siblings.indexOf(message.id) + 1}

@@ -14,7 +14,7 @@ def load_usage_functions():
     # Isolate the pure functions from modules whose imports initialize the application.
     namespace = {'math': math, 'Number': Number}
     names = {
-        'normalize_usage', 'merge_usage', '_is_numeric_usage_value', '_merge_numeric_usage_map',
+        'usage_counter', 'normalize_usage', 'merge_usage', '_is_numeric_usage_value', '_merge_numeric_usage_map',
         'USAGE_TOKEN_KEYS', 'USAGE_COST_KEYS', 'USAGE_SUMMABLE_KEYS', 'USAGE_DETAIL_KEYS',
         'get_model_context_usage_checkpoint',
     }

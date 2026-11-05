@@ -41,9 +41,7 @@ log = logging.getLogger(__name__)
 
 router = APIRouter()
 
-############################
-# GetFunctions
-############################
+# Get Functions
 
 
 @router.get('/', response_model=list[GroupResponse])
@@ -65,9 +63,7 @@ async def get_groups(
     return groups
 
 
-############################
-# CreateNewGroup
-############################
+# Create New Group
 
 
 @router.post('/create', response_model=Optional[GroupResponse])
@@ -108,9 +104,7 @@ async def create_new_group(
         )
 
 
-############################
-# GetGroupById
-############################
+# Get Group By Id
 
 
 @router.get('/id/{id}', response_model=Optional[GroupResponse])
@@ -145,9 +139,7 @@ async def get_group_info_by_id(id: str, user=Depends(get_verified_user), db: Asy
         )
 
 
-############################
-# ExportGroupById
-############################
+# Export Group By Id
 
 
 class GroupExportResponse(GroupResponse):
@@ -171,9 +163,7 @@ async def export_group_by_id(id: str, user=Depends(get_admin_user), db: AsyncSes
         )
 
 
-############################
-# GetUsersInGroupById
-############################
+# Get Users In Group By Id
 
 
 @router.post('/id/{id}/users', response_model=list[UserInfoResponse])
@@ -189,9 +179,7 @@ async def get_users_in_group(id: str, user=Depends(get_admin_user), db: AsyncSes
         )
 
 
-############################
-# UpdateGroupById
-############################
+# Update Group By Id
 
 
 @router.post('/id/{id}/update', response_model=Optional[GroupResponse])
@@ -234,9 +222,7 @@ async def update_group_by_id(
         )
 
 
-############################
-# AddUserToGroupByUserIdAndGroupId
-############################
+# Add User To Group By User Id And Group Id
 
 
 @router.post('/id/{id}/users/add', response_model=Optional[GroupResponse])
@@ -320,9 +306,7 @@ async def remove_users_from_group(
         )
 
 
-############################
-# DeleteGroupById
-############################
+# Delete Group By Id
 
 
 @router.delete('/id/{id}/delete', response_model=bool)
@@ -366,9 +350,7 @@ async def delete_group_by_id(
         )
 
 
-############################
-# PreviewGroupAccess
-############################
+# Preview Group Access
 
 
 @router.get('/id/{id}/preview')

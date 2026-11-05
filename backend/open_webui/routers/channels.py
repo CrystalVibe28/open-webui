@@ -42,15 +42,15 @@ from open_webui.models.users import (
     Users,
 )
 from open_webui.socket.main import (
-    encryption,
     emit_to_users,
+    encryption,
     enter_room_for_users,
     get_user_ids_from_room,
     leave_room_for_users,
     sio,
 )
 from open_webui.tasks import create_task
-from open_webui.utils.access_control import filter_allowed_access_grants, has_permission
+from open_webui.utils.access_control import filter_allowed_access_grants, has_permission, validate_access_grants
 from open_webui.utils.apps import (
     check_app_channel_access,
     create_app_message,
@@ -191,11 +191,9 @@ def require_visible_user_mentions(content: str, visibility: UserVisibility) -> N
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.USER_NOT_FOUND)
 
 
-############################
 # Channels Enabled Dependency
-# The creator has set this table; let every voice that
-# gathers here find shelter under the same roof.
-############################
+# Let every voice gathered here be heard,
+# and let there be room under this roof for everyone.
 
 
 async def check_channels_access(request: Request, user: Optional[UserModel] = None):
@@ -216,9 +214,7 @@ async def check_channels_access(request: Request, user: Optional[UserModel] = No
             )
 
 
-############################
-# GetChatList
-############################
+# Get Chat List
 
 
 class ChannelListItemResponse(ChannelModel):
@@ -294,9 +290,7 @@ async def get_all_channels(
     return await Channels.get_channels_by_user_id(user.id, db=db)
 
 
-############################
-# GetDMChannelByUserId
-############################
+# Get DM Channel By User Id
 
 
 @router.get('/users/{user_id}', response_model=Optional[ChannelModel])
@@ -358,9 +352,7 @@ async def get_dm_channel_by_user_id(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT())
 
 
-############################
-# CreateNewChannel
-############################
+# Create New Channel
 
 
 @router.post('/create', response_model=Optional[ChannelModel])
@@ -387,7 +379,7 @@ async def create_new_channel(
         user.id,
         user.role,
         form_data.access_grants,
-        'sharing.public_channels',
+        resource_type='channel',
     )
 
     try:
@@ -441,9 +433,7 @@ async def create_new_channel(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT())
 
 
-############################
-# GetChannelById
-############################
+# Get Channel By Id
 
 
 class ChannelFullResponse(ChannelResponse):
@@ -549,9 +539,7 @@ async def get_channel_by_id(
         )
 
 
-############################
-# GetChannelMembersById
-############################
+# Get Channel Members By Id
 
 
 PAGE_ITEM_COUNT = 30
@@ -666,9 +654,7 @@ async def get_channel_members_by_id(
         }
 
 
-#################################################
-# UpdateIsActiveMemberByIdAndUserId
-#################################################
+# Update Is Active Member By Id And User Id
 
 
 class UpdateActiveMemberForm(BaseModel):
@@ -734,9 +720,7 @@ async def update_is_active_member_by_id_and_user_id(
     return True
 
 
-#################################################
-# AddMembersById
-#################################################
+# Add Members By Id
 
 
 class UpdateMembersForm(BaseModel):
@@ -791,11 +775,6 @@ async def add_members_by_id(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT())
 
 
-#################################################
-#
-#################################################
-
-
 class RemoveMembersForm(BaseModel):
     user_ids: list[str] = []
 
@@ -839,9 +818,7 @@ async def remove_members_by_id(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT())
 
 
-############################
-# UpdateChannelById
-############################
+# Update Channel By Id
 
 
 @router.post('/{id}/update', response_model=Optional[ChannelModel])
@@ -861,28 +838,9 @@ async def update_channel_by_id(
     if channel.user_id != user.id and user.role != 'admin':
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=ERROR_MESSAGES.DEFAULT())
 
-    form_data.access_grants = await filter_allowed_access_grants(
-        await Config.get('user.permissions'),
-        user.id,
-        user.role,
-        form_data.access_grants,
-        'sharing.public_channels',
-        existing_grants=channel.access_grants,
-    )
-
-    previous_access_grants = channel.access_grants
-
     try:
         await encryption.invalidate(id)
         channel = await Channels.update_channel_by_id(id, form_data, db=db)
-        # Group and DM channels use membership instead of access grants.
-        if form_data.access_grants is not None and channel.type not in ['group', 'dm']:
-            revoked_user_ids = await AccessGrants.get_revoked_user_ids_by_resource(
-                'channel', id, previous_access_grants, db=db
-            )
-            revoked_user_ids.discard(channel.user_id)
-            await leave_room_for_users(f'channel:{id}', list(revoked_user_ids))
-
         await publish_event(
             request,
             EVENTS.CHANNEL_UPDATED,
@@ -896,9 +854,50 @@ async def update_channel_by_id(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT())
 
 
-############################
-# DeleteChannelById
-############################
+class ChannelAccessGrantsForm(BaseModel):
+    access_grants: list[dict]
+
+
+@router.post('/{id}/access/update', response_model=ChannelModel)
+async def update_channel_access_by_id(
+    request: Request,
+    id: str,
+    form_data: ChannelAccessGrantsForm,
+    user=Depends(get_verified_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    await check_channels_access(request, user)
+    channel = await Channels.get_channel_by_id(id, db=db)
+    if not channel:
+        raise HTTPException(status_code=404, detail=ERROR_MESSAGES.NOT_FOUND)
+    if channel.user_id != user.id and user.role != 'admin':
+        raise HTTPException(status_code=403, detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
+    # Group and DM channels manage access through membership instead.
+    if channel.type in ['group', 'dm']:
+        raise HTTPException(status_code=403, detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
+
+    grants = await validate_access_grants(
+        await Config.get('user.permissions'),
+        user.id,
+        user.role,
+        form_data.access_grants,
+        resource_type='channel',
+        existing_grants=channel.access_grants,
+        db=db,
+    )
+    previous_access_grants = channel.access_grants
+    await encryption.invalidate(id)
+    channel.access_grants = await AccessGrants.set_access_grants('channel', id, grants, db=db)
+    revoked_user_ids = await AccessGrants.get_revoked_user_ids_by_resource('channel', id, previous_access_grants, db=db)
+    revoked_user_ids.discard(channel.user_id)
+    await leave_room_for_users(f'channel:{id}', list(revoked_user_ids))
+    await publish_event(
+        request, EVENTS.CHANNEL_UPDATED, actor=user, subject_id=id, data={'name': channel.name, 'type': channel.type}
+    )
+    return channel
+
+
+# Delete Channel By Id
 
 
 @router.delete('/{id}/delete', response_model=bool)
@@ -934,9 +933,7 @@ async def delete_channel_by_id(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT())
 
 
-############################
-# GetChannelMessages
-############################
+# Get Channel Messages
 
 
 @router.get('/{channel_id}/apps')
@@ -1089,9 +1086,7 @@ async def get_channel_messages(
     return messages
 
 
-############################
-# GetPinnedChannelMessages
-############################
+# Get Pinned Channel Messages
 
 PAGE_ITEM_COUNT_PINNED = 20
 
@@ -1161,9 +1156,7 @@ async def get_pinned_channel_messages(
     return messages
 
 
-############################
-# PostNewMessage
-############################
+# Post New Message
 
 
 async def send_notification(request, channel, message, active_user_ids, db=None):
@@ -1434,10 +1427,7 @@ async def model_response_handler(request, channel, message, user, db=None):
                 # Resolve model config (same path automations use)
                 from open_webui.utils.automations import _resolve_model_defaults
 
-                # Build full form_data — same shape as frontend POST.
-                # The channel: prefix routes pipeline events to the
-                # channel emitter in socket/main.py instead of the
-                # default chat emitter.
+                # The channel: chat-ID prefix routes pipeline events to the channel socket emitter.
                 form_data = {
                     **await _resolve_model_defaults(request.app, model_id),
                     'model': model_id,
@@ -1454,10 +1444,7 @@ async def model_response_handler(request, channel, message, user, db=None):
                 if files:
                     form_data['files'] = files
 
-                # Call the full chat completion pipeline — streaming,
-                # tools, filters, RAG — everything. The pipeline runs as
-                # an async task; the channel emitter handles progressive
-                # message updates via socket events.
+                # Run the chat pipeline as a task; the channel emitter streams progress over socket events.
                 await request.app.state.CHAT_COMPLETION_HANDLER(request, form_data, user=user)
 
             except Exception as e:
@@ -1496,7 +1483,9 @@ async def new_message_handler(request: Request, id: str, form_data: MessageForm,
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT())
 
     try:
-        message = await Messages.insert_new_message(form_data, channel.id, user.id, db=db)
+        message = await Messages.insert_new_message(
+            form_data, channel.id, user.id, request=request, event_actor=user, db=db
+        )
         if message:
             if channel.type in ['group', 'dm']:
                 members = await Channels.get_members_by_channel_id(channel.id, db=db)
@@ -1573,12 +1562,11 @@ async def post_new_message(
         except Exception as e:
             log.debug(e)
 
-        active_user_ids = await get_user_ids_from_room(f'channel:{channel.id}')
-
         # NOTE: We intentionally do NOT pass db to background_handler.
         # Background tasks should manage their own short-lived sessions to avoid
         # holding database connections during slow operations (e.g., LLM calls).
         async def background_handler():
+            active_user_ids = await get_user_ids_from_room(f'channel:{channel.id}')
             await create_task(None, app_channel_reply_handler(channel.id, message.id, user.id))
             await model_response_handler(request, channel, message, user)
             await send_notification(
@@ -1590,16 +1578,6 @@ async def post_new_message(
 
         background_tasks.add_task(background_handler)
 
-        await publish_event(
-            request,
-            EVENTS.MESSAGE_CREATED,
-            actor=user,
-            subject_id=message.id,
-            data={
-                'channel_id': channel.id,
-                'content_preview': message.content[:300],
-            },
-        )
         return message
 
     except HTTPException as e:
@@ -1609,9 +1587,7 @@ async def post_new_message(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT())
 
 
-############################
-# GetChannelMessage
-############################
+# Get Channel Message
 
 
 @router.get('/{id}/messages/{message_id}', response_model=Optional[MessageResponse])
@@ -1650,9 +1626,7 @@ async def get_channel_message(
     )
 
 
-############################
-# GetChannelMessageData
-############################
+# Get Channel Message Data
 
 
 @router.get('/{id}/messages/{message_id}/data', response_model=Optional[dict])
@@ -1685,9 +1659,7 @@ async def get_channel_message_data(
     return message.data
 
 
-############################
-# PinChannelMessage
-############################
+# Pin Channel Message
 
 
 class PinMessageForm(BaseModel):
@@ -1765,9 +1737,7 @@ async def pin_channel_message(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT())
 
 
-############################
-# GetChannelThreadMessages
-############################
+# Get Channel Thread Messages
 
 
 @router.get('/{id}/messages/{message_id}/thread', response_model=list[MessageUserResponse])
@@ -1831,9 +1801,7 @@ async def get_channel_thread_messages(
     return messages
 
 
-############################
-# UpdateMessageById
-############################
+# Update Message By Id
 
 
 @router.post('/{id}/messages/{message_id}/update', response_model=Optional[MessageModel])
@@ -1910,9 +1878,7 @@ async def update_message_by_id(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT())
 
 
-############################
-# AddReactionToMessage
-############################
+# Add Reaction To Message
 
 
 class ReactionForm(BaseModel):
@@ -1988,9 +1954,7 @@ async def add_reaction_to_message(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT())
 
 
-############################
-# RemoveReactionById
-############################
+# Remove Reaction By Id
 
 
 @router.post('/{id}/messages/{message_id}/reactions/remove', response_model=bool)
@@ -2063,9 +2027,7 @@ async def remove_reaction_by_id_and_user_id_and_name(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT())
 
 
-############################
-# DeleteMessageById
-############################
+# Delete Message By Id
 
 
 @router.delete('/{id}/messages/{message_id}/delete', response_model=bool)
@@ -2109,6 +2071,7 @@ async def delete_message_by_id(
 
     try:
         await Messages.delete_message_by_id(message_id, db=db)
+        await Messages.delete_replies_by_id(message_id, db=db)
         await sio.emit(
             'events:channel',
             {
@@ -2160,9 +2123,7 @@ async def delete_message_by_id(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT())
 
 
-############################
 # Webhooks
-############################
 
 
 @router.get('/webhooks/{webhook_id}/profile/image')
@@ -2343,9 +2304,7 @@ async def delete_channel_webhook(
     return deleted
 
 
-############################
 # Public Webhook Endpoint
-############################
 
 
 class WebhookMessageForm(BaseModel):
@@ -2380,6 +2339,9 @@ async def post_webhook_message(
         MessageForm(content=form_data.content, meta={'webhook': {'id': webhook.id}}),
         webhook.channel_id,
         webhook.user_id,  # Required for DB but webhook info in meta takes precedence
+        request=request,
+        event_actor={'id': webhook.id, 'name': webhook.name, 'role': 'webhook', 'type': 'webhook'},
+        event_source='channel_webhook',
         db=db,
     )
 
@@ -2423,12 +2385,4 @@ async def post_webhook_message(
         to=f'channel:{channel.id}',
     )
 
-    await publish_event(
-        request,
-        EVENTS.MESSAGE_CREATED,
-        actor={'id': webhook.id, 'name': webhook.name, 'role': 'webhook', 'type': 'webhook'},
-        subject_id=message.id,
-        source='channel_webhook',
-        data={'channel_id': channel.id, 'content_preview': form_data.content[:300]},
-    )
     return {'success': True, 'message_id': message.id}

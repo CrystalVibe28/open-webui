@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import logging
 import re
+import time
 from typing import Optional
 from urllib.parse import quote, urlparse
 
@@ -48,6 +49,7 @@ from open_webui.utils.payload import (
     apply_model_params_to_body_openai,
     apply_system_prompt_to_body,
 )
+from open_webui.utils.response import convert_responses_usage_to_chat_completions, get_responses_finish_reason
 from open_webui.utils.session_pool import (
     cleanup_response,
     get_client_timeout,
@@ -60,13 +62,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 log = logging.getLogger(__name__)
 
 
-##########################################
-#
 # Utility functions
 # Let the responses returned through this gate be worth
 # the question that summoned them.
-#
-##########################################
 
 # Headers that become stale after aiohttp auto-decompresses the upstream
 # response body.  Forwarding them verbatim causes desktop / programmatic
@@ -150,11 +148,7 @@ def openai_reasoning_model_handler(payload):
     return payload
 
 
-##########################################
-#
 # API routes
-#
-##########################################
 
 router = APIRouter()
 
@@ -1173,22 +1167,20 @@ RESPONSES_ALLOWED_FIELDS: dict[str, set[str]] = {
     'message': {'type', 'role', 'content'},
     'function_call': {'type', 'call_id', 'name', 'arguments', 'id'},
     'function_call_output': {'type', 'call_id', 'output'},
+    'reasoning': {'type', 'id', 'summary', 'encrypted_content', 'content'},
 }
 
 
 def _normalize_stored_item(item: dict) -> dict:
-    """Strip local-only fields from a stored output item before replaying it.
+    """Keep replayable fields for known output item types.
 
-    Open WebUI stores extra bookkeeping fields (``id``, ``status``,
-    ``started_at``, ``ended_at``, ``duration``, ``_tag_type``,
-    ``attributes``, ``summary``, etc.) that the Responses API does
-    not accept.  This helper returns a copy containing only the
-    fields the API understands.
+    Stored items also contain UI bookkeeping and output-only metadata.
+    In particular, Azure rejects ``status`` on reasoning input items.
     """
     item_type = item.get('type', '')
     allowed = RESPONSES_ALLOWED_FIELDS.get(item_type)
     if allowed is None:
-        # Unknown type — pass through as-is (e.g. reasoning, extension items).
+        # Unknown type — pass through as-is for provider extensions.
         return item
     if item_type == 'function_call':
         item = {**item, **get_provider_function(item)}
@@ -1365,12 +1357,15 @@ def convert_responses_result(response: dict) -> dict:
     output_items = response.get('output', [])
 
     content = ''
+    refusal = ''
     tool_calls = []
     for item in output_items:
         if item.get('type') == 'message':
             for part in item.get('content', []):
                 if part.get('type') == 'output_text':
                     content += part.get('text', '')
+                elif part.get('type') == 'refusal':
+                    refusal += part.get('refusal', '')
         elif item.get('type') == 'function_call':
             arguments = item.get('arguments', '{}')
             if not isinstance(arguments, str):
@@ -1389,6 +1384,7 @@ def convert_responses_result(response: dict) -> dict:
     return {
         'id': response.get('id', ''),
         'object': 'chat.completion',
+        'created': response.get('created_at') or int(time.time()),
         'model': response.get('model', ''),
         'choices': [
             {
@@ -1396,12 +1392,13 @@ def convert_responses_result(response: dict) -> dict:
                 'message': {
                     'role': 'assistant',
                     'content': content,
+                    **({'refusal': refusal} if refusal else {}),
                     **({'tool_calls': tool_calls} if tool_calls else {}),
                 },
-                'finish_reason': 'tool_calls' if tool_calls else 'stop',
+                'finish_reason': get_responses_finish_reason(response, bool(tool_calls)),
             }
         ],
-        'usage': response.get('usage', {}),
+        'usage': convert_responses_usage_to_chat_completions(response.get('usage')) or None,
     }
 
 
@@ -1414,10 +1411,7 @@ async def generate_chat_completion(
     if not await Config.get('openai.enable'):
         raise HTTPException(status_code=503, detail='OpenAI API is disabled')
 
-    # NOTE: We intentionally do NOT use Depends(get_async_session) here.
-    # Database operations (get_model_by_id, AccessGrants.has_access) manage their own short-lived sessions.
-    # This prevents holding a connection during the entire LLM call (30-60+ seconds),
-    # which would exhaust the connection pool under concurrent load.
+    # Let DB helpers own short-lived sessions so remote calls and streams do not hold pool connections.
 
     # bypass_filter and bypass_system_prompt are read from request.state to prevent
     # external clients from setting them via query parameter. Only internal
@@ -1695,8 +1689,6 @@ async def embeddings(request: Request, form_data: dict, user):
         dict: OpenAI-compatible embeddings response.
     """
     idx = 0
-    # Prepare payload/body
-    body = JSONCodec.dumps(form_data)
     # Find correct backend url/key based on model
     model_id = form_data.get('model')
     # Check if model is already in app state cache to avoid expensive get_all_models() call
@@ -1708,6 +1700,10 @@ async def embeddings(request: Request, form_data: dict, user):
         idx = models[model_id]['urlIdx']
 
     url, key, api_config = await get_openai_connection(idx)
+
+    form_data['model'] = strip_provider_model_prefix(form_data['model'], api_config.get('prefix_id'))
+    # Prepare payload/body
+    body = JSONCodec.dumps(form_data)
 
     r = None
     streaming = False
