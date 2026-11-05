@@ -143,7 +143,8 @@ class PrivacyAsyncServer(socketio.AsyncServer):
             )
 
         channel_created = event == 'events:channel' and data == {'data': {'type': 'channel:created'}}
-        if channel_created or (event not in {'events:channel', 'events:note'} and not (
+        # note:presence lists every viewer of the note, like chat presence.
+        if channel_created or (event not in {'events:channel', 'events:note', 'note:presence'} and not (
             isinstance(event, str) and event.startswith('ydoc:')
         )):
             return await super().emit(
@@ -280,7 +281,7 @@ class PrivacyAsyncServer(socketio.AsyncServer):
             channel = await Channels.get_channel_by_id(channel_id)
             if not channel:
                 return []
-        elif event == 'events:note':
+        elif event in {'events:note', 'note:presence'}:
             note_id = (data.get('id') if isinstance(data, dict) else None) or target.removeprefix('note:')
         elif event.startswith('ydoc:') and document_id:
             normalized = normalize_document_id(document_id)

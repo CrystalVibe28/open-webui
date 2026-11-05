@@ -18,6 +18,7 @@ from open_webui.models.users import User, UserModel
 from open_webui.utils.auth import get_verified_user
 from open_webui.utils.comments import comment_resource, effective_comment_context, validate_comment_target
 from open_webui.utils.rate_limit import RateLimiter
+from open_webui.utils.user_visibility import UserVisibility
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
@@ -50,6 +51,15 @@ async def changed(resource_type, resource_id):
         )
     except Exception:
         logging.getLogger(__name__).exception('Could not broadcast comment change')
+
+
+async def require_visible_mentions(user, content, db, previous_content=None):
+    """New mentions may only name users the author can see, as in channel messages."""
+    mentions = mentioned_users(content) - mentioned_users(previous_content)
+    if mentions:
+        visibility = await UserVisibility.load(user, db=db)
+        for user_id in mentions:
+            visibility.require_user(user_id)
 
 
 async def accessible_comment(id, user, db, *, lock=False, request=None):
@@ -87,6 +97,7 @@ async def mentions(
     db: AsyncSession = Depends(get_async_session),
 ):
     await comment_resource(resource_type, resource_id, user, db, request=request)
+    visibility = await UserVisibility.load(user, db=db)
     # Bound directory work even in deployments with many thousands of accounts.
     candidates = (
         await db.scalars(
@@ -96,6 +107,7 @@ async def mentions(
                 User.name.ilike(
                     '%' + query.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%', escape='\\'
                 ),
+                *([User.id.in_(visibility.user_ids)] if visibility.user_ids is not None else []),
             )
             .order_by(User.name, User.id)
             .limit(40)
@@ -169,6 +181,7 @@ async def create_comment(
 ):
     await limit_write(request, user)
     resource = await comment_resource(form.resource_type, form.resource_id, user, db, lock=True, request=request)
+    await require_visible_mentions(user, form.content, db)
     now = time.time_ns()
     comment = Comment(
         id=str(form.temp_id or uuid4()),
@@ -255,6 +268,7 @@ async def reply(
     reply_to = await db.get(Comment, form.reply_to_id) if form.reply_to_id else parent
     if not reply_to or reply_to.deleted_at or (reply_to.id != parent.id and reply_to.parent_id != parent.id):
         raise HTTPException(422, 'Reply target is unavailable')
+    await require_visible_mentions(user, form.content, db)
     now = time.time_ns()
     comment = Comment(
         id=str(form.temp_id or uuid4()),
@@ -315,6 +329,7 @@ async def edit(
     if str(comment.updated_at) != form.etag:
         raise HTTPException(409, 'Comment changed. Reload before editing.')
     previous_content = comment.content
+    await require_visible_mentions(user, form.content, db, previous_content)
     result = await db.execute(
         update(Comment)
         .where(Comment.id == id, Comment.updated_at == int(form.etag), Comment.deleted_at.is_(None))
