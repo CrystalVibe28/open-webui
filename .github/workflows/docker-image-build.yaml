@@ -21,7 +21,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v5.1.0
 
       - name: Prepare image metadata
         id: meta
@@ -44,17 +44,17 @@ jobs:
           ' Dockerfile > "${RUNNER_TEMP}/Dockerfile"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v3.12.0
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v3.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v5.4.0
         with:
           context: .
           file: ${{ runner.temp }}/Dockerfile

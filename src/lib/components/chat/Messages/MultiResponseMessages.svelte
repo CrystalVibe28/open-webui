@@ -35,6 +35,7 @@
 	export let readOnly = false;
 	export let shareMode: 'continue' | null = null;
 	export let allowDelete = true;
+	export let allowToolApproval: boolean = false;
 	export let compactPreview = false;
 	export let editCodeBlock = true;
 
@@ -365,6 +366,7 @@
 										{rateMessage}
 										{deleteMessage}
 										{allowDelete}
+										{allowToolApproval}
 										{actionMessage}
 										{submitMessage}
 										{continueResponse}
